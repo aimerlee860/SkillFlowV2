@@ -1,0 +1,23 @@
+[project]
+name = "skillflow"
+version = "0.1.0"
+description = "Skill creation, evaluation and evolution framework based on deepagents"
+requires-python = ">=3.12"
+dependencies = [
+    "deepagents",
+    "langchain-core>=1.2.21",
+    "langchain>=1.2.11",
+    "python-dotenv",
+    "pyyaml",
+    "rich",
+]
+
+[project.scripts]
+skillflow = "skillflow.__main__:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

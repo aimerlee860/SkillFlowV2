@@ -1,0 +1,68 @@
+description: "代码审查助手 - 自动审查代码并提供改进建议"
+
+scene:
+  - "开发者提交 PR 后需要快速获得代码质量反馈"
+  - "团队 code review 时需要标准化的审查建议"
+  - "个人开发者想检查自己代码的潜在问题"
+
+input_output:
+  input: "一段代码（支持 Python、JavaScript、Go 等主流语言）"
+  output: "结构化的审查报告，包含问题列表、严重等级和改进建议"
+
+rule:
+  - "必须从安全性、性能、可读性、正确性四个维度审查"
+  - "每个问题必须标注严重等级（critical/warning/info）"
+  - "不要只指出问题，必须同时给出具体的修复建议和代码示例"
+
+example:
+  - input: |
+      def login(username, password):
+          query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
+          result = db.execute(query)
+          return result.fetchone()
+    output: |
+      ## 审查报告
+
+      ### [CRITICAL] SQL 注入漏洞
+      使用字符串拼接构建 SQL 查询，存在 SQL 注入风险。
+      **建议：** 使用参数化查询。
+      ```python
+      query = "SELECT * FROM users WHERE username=? AND password=?"
+      result = db.execute(query, (username, password))
+      ```
+
+      ### [CRITICAL] 明文密码比较
+      密码未使用哈希比较，存在安全隐患。
+      **建议：** 使用 bcrypt 或 argon2 进行密码哈希验证。
+
+      ### [WARNING] 缺少错误处理
+      数据库查询可能失败但未处理异常。
+
+  - input: |
+      function fibonacci(n) {
+        if (n <= 0) return 0;
+        if (n === 1) return 1;
+        return fibonacci(n - 1) + fibonacci(n - 2);
+      }
+    output: |
+      ## 审查报告
+
+      ### [WARNING] 指数级时间复杂度
+      递归实现导致 O(2^n) 时间复杂度，n 较大时性能极差。
+      **建议：** 使用动态规划或迭代方式。
+      ```javascript
+      function fibonacci(n) {
+        if (n <= 0) return 0;
+        if (n === 1) return 1;
+        let a = 0, b = 1;
+        for (let i = 2; i <= n; i++) {
+          [a, b] = [b, a + b];
+        }
+        return b;
+      }
+      ```
+
+      ### [INFO] 缺少输入验证
+      未验证 n 是否为整数或负数。
+
+reference: []
