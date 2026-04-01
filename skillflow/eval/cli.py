@@ -99,5 +99,4 @@ def _run(args: argparse.Namespace) -> None:
     result_file = f"{output}/eval_result_{ts}.json"
     save_json(result_file, result)
     console.print(f"[green]评估结果已保存:[/green] {result_file}")
-    console.print(f"[green]总体通过率:[/green] {result['overall_pass_rate']}")
-    console.print(f"[green]平均用例通过率:[/green] {result['avg_case_pass_rate']}")
+    console.print(f"[green]Overall Reward:[/green] {result['overall_reward']}")

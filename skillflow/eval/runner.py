@@ -193,19 +193,22 @@ def _build_eval_result(
     trials: int,
 ) -> dict:
     """构建完整的评估结果。"""
-    from .metrics import compute_all_metrics
+    from .metrics import compute_case_metrics, compute_overall_reward
 
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
     skill_name = Path(skill_path).name
 
+    case_rewards = []
     for case in case_results:
         passes = sum(1 for r in case["results"] if r["pass"])
         case["pass_rate"] = passes / len(case["results"]) if case["results"] else 0.0
-
-        # 用例总耗时
         case["time_total"] = round(sum(r.get("time_total", 0) for r in case["results"]), 2)
 
-    metrics = compute_all_metrics(case_results, trials)
+        metrics = compute_case_metrics(case["results"])
+        case.update(metrics)
+        case_rewards.append(metrics["reward"])
+
+    overall_reward = compute_overall_reward(case_rewards)
 
     return {
         "skill": skill_name,
@@ -214,7 +217,7 @@ def _build_eval_result(
         "total_cases": len(test_cases),
         "test_cases": case_results,
         "time_total": round(sum(c.get("time_total", 0) for c in case_results), 2),
-        **metrics,
+        "overall_reward": overall_reward,
     }
 
 

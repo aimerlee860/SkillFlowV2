@@ -25,7 +25,15 @@ def get_llm() -> BaseChatModel:
         kwargs["api_key"] = config.api_key
 
     # 速率限制
-    if config.rpm:
+    if config.min_interval:
+        # 最小间隔模式：桶容量=1，每次请求后必须等待 min_interval 秒
+        rate_limiter = InMemoryRateLimiter(
+            requests_per_second=1.0 / config.min_interval,
+            check_every_n_seconds=0.1,
+            max_bucket_size=1,
+        )
+        kwargs["rate_limiter"] = rate_limiter
+    elif config.rpm:
         rate_limiter = InMemoryRateLimiter(
             requests_per_second=config.rpm / 60.0,
             check_every_n_seconds=0.1,

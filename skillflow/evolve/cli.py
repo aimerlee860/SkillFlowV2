@@ -17,7 +17,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("evolve", help="演化技能")
     parser.add_argument("skill", help="技能目录路径")
     parser.add_argument("--spec", default=None, help="SPEC 文件路径（可选）")
-    parser.add_argument("--threshold", type=float, default=0.1, help="通过率提升阈值（默认0.1）")
+    parser.add_argument("--threshold", type=float, default=0.01, help="通过率提升阈值（默认0.01）")
     parser.add_argument("--trials", type=int, default=5, help="每个用例运行次数（默认5）")
     parser.add_argument(
         "--parallel", "-j",
@@ -35,8 +35,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--patience", "-p",
         type=int,
-        default=20,
-        help="Stop after N no-improvements (default: 20)",
+        default=10,
+        help="Stop after N no-improvements (default: 10)",
     )
     parser.add_argument(
         "--mode", "-M",

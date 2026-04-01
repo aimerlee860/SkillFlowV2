@@ -15,6 +15,7 @@ class Config:
     api_key: str | None
     model_name: str
     rpm: float | None  # 每分钟请求数限制
+    min_interval: float | None  # 两次请求之间的最小间隔（秒）
 
 
 _config: Config | None = None
@@ -45,6 +46,7 @@ def get_config() -> Config:
     model_name = os.environ.get("LLM_MODEL_NAME")
     api_key = os.environ.get("LLM_API_KEY")
     rpm = os.environ.get("LLM_RPM")
+    min_interval = os.environ.get("LLM_MIN_INTERVAL")
 
     if not base_url:
         raise ValueError(
@@ -60,5 +62,6 @@ def get_config() -> Config:
         api_key=api_key,
         model_name=model_name,
         rpm=float(rpm) if rpm else None,
+        min_interval=float(min_interval) if min_interval else None,
     )
     return _config

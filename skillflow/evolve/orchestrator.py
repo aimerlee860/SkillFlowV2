@@ -21,11 +21,11 @@ def evolve_skill(
     skill_path: str | Path,
     spec_path: str | Path | None = None,
     output_dir: str | Path = "./output/evolve",
-    threshold: float = 0.1,
+    threshold: float = 0.01,
     trials: int = 5,
     parallel: int = 1,
     max_iterations: int = 100,
-    patience: int = 20,
+    patience: int = 10,
     mode: str = "steady",
     ignore_cache: bool = False,
     test_cases_file: str | Path | None = None,
@@ -54,6 +54,14 @@ def evolve_skill(
     output_dir = Path(output_dir)
     ensure_dir(output_dir)
 
+    # 创建 timestamp 运行目录，支持多次执行
+    timestamp = time.strftime("%Y%m%d%H%M")
+    run_dir = output_dir / timestamp
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    ensure_dir(run_dir)
+    output_dir = run_dir
+
     # Step 1: 获取测试用例
     console.print("[bold blue]Step 1: 获取测试用例[/bold blue]")
     if test_cases_file:
@@ -79,24 +87,16 @@ def evolve_skill(
         debug=debug,
     )
     save_json(output_dir / "baseline.json", baseline_result)
-    best_rate = baseline_result["overall_pass_rate"]
+    best_rate = baseline_result["overall_reward"]
     best_iter = 0  # 最优版本对应的迭代号（0 = baseline）
-    console.print(f"[green]Baseline 通过率:[/green] {best_rate:.4f}")
+    console.print(f"[green]Baseline Reward:[/green] {best_rate:.4f}")
     console.print(f"[blue]演化模式:[/blue] {mode}\n")
 
     # 打印 baseline 详细评分表格
     _print_baseline_table(baseline_result)
 
-    # 全部通过则跳过演化
-    if all(case["pass_rate"] >= 1.0 for case in baseline_result["test_cases"]):
-        console.print("[yellow]所有测试用例都已通过，无需演化。[/yellow]")
-        log = _build_log(
-            skill_path, "no_improvement_needed", threshold, mode,
-            baseline_rate=best_rate, evolved_rate=best_rate,
-            iterations_done=0, history=[],
-        )
-        save_json(output_dir / "evolve_log.json", log)
-        return log
+    # 收集 baseline 失败用例，供第一轮反思使用
+    failed_cases = _collect_failed_cases(baseline_result)
 
     # 备份原始技能（完整目录，保留技能目录名）
     skill_name = skill_path.name
@@ -113,8 +113,8 @@ def evolve_skill(
     for iteration in range(1, max_iterations + 1):
         console.rule(f"[bold cyan]演化轮次 {iteration}/{max_iterations} ({mode})[/bold cyan]")
 
-        # 准备本轮基础版本：从 baseline_skill 完整复制
-        iter_dir = output_dir / f"iter_{iteration}"
+        # 准备本轮工作目录：从基础版本完整复制
+        iter_dir = output_dir / f"iter-{iteration}"
         evolved_skill_dir = iter_dir / skill_name
         if iter_dir.exists():
             shutil.rmtree(iter_dir)
@@ -124,27 +124,16 @@ def evolve_skill(
         else:
             shutil.copytree(best_dir, evolved_skill_dir)
 
-        # 收集当前版本的失败用例
-        current_result = run_eval(
-            skill_path=evolved_skill_dir,
-            test_cases=test_cases,
-            trials=trials,
-            parallel=parallel,
-            debug=debug,
-        )
-        failed_cases = _collect_failed_cases(current_result)
+        # 审视 + 可选反思（就地修改 evolved_skill_dir 中的文件）
+        if failed_cases:
+            console.print(f"[yellow]{len(failed_cases)} 个失败用例，执行审视+反思[/yellow]")
+        else:
+            console.print(f"[blue]无失败用例，执行审视[/blue]")
 
-        if not failed_cases:
-            console.print(f"[green]轮次 {iteration}: 所有用例通过，停止演化！[/green]\n")
-            save_json(iter_dir / "eval.json", current_result)
-            break
+        analysis, strategy = mutate_skill(evolved_skill_dir, failed_cases=failed_cases)
+        save_text(iter_dir / "analysis.md", analysis)
 
-        console.print(f"[yellow]轮次 {iteration}: {len(failed_cases)} 个失败用例[/yellow]")
-
-        # 在副本目录上就地演化
-        reflection = mutate_skill(evolved_skill_dir, failed_cases)
-        save_text(iter_dir / "reflection.md", reflection)
-
+        # 评估演化后的技能
         evolved_result = run_eval(
             skill_path=evolved_skill_dir,
             test_cases=test_cases,
@@ -152,26 +141,25 @@ def evolve_skill(
             parallel=parallel,
             debug=debug,
         )
-        evolved_rate = evolved_result["overall_pass_rate"]
+        evolved_rate = evolved_result["overall_reward"]
         save_json(iter_dir / "eval.json", evolved_result)
 
         improvement = evolved_rate - best_rate
         accepted = improvement >= threshold
 
-        # 截取反思文本前 200 字符作为摘要
-        summary = reflection.strip().replace("\n", " ")[:200]
+        summary = analysis.strip().replace("\n", " ")[:200]
 
         iter_record = {
             "iteration": iteration,
             "mode": mode,
+            "strategy": strategy,
             "base_rate": round(
-                baseline_result["overall_pass_rate"] if mode == "steady" else best_rate, 4
+                baseline_result["overall_reward"] if mode == "steady" else best_rate, 4
             ),
             "best_rate": round(best_rate, 4),
             "evolved_rate": round(evolved_rate, 4),
             "improvement": round(improvement, 4),
             "accepted": accepted,
-            "failed_cases": len(failed_cases),
             "summary": summary,
         }
         history.append(iter_record)
@@ -187,6 +175,9 @@ def evolve_skill(
         else:
             no_improve_count += 1
 
+        # 更新失败用例，供下轮反思使用
+        failed_cases = _collect_failed_cases(evolved_result)
+
         # 早停
         if no_improve_count >= patience:
             console.print(
@@ -197,14 +188,14 @@ def evolve_skill(
         console.print("")
 
     # 最终结果：记录最优版本（不修改原技能目录）
-    final_improvement = best_rate - baseline_result["overall_pass_rate"]
+    final_improvement = best_rate - baseline_result["overall_reward"]
 
     console.rule("[bold green]演化结束[/bold green]")
     summary_table = Table(title="最终结果")
     summary_table.add_column("指标", style="cyan")
     summary_table.add_column("值", style="green")
-    summary_table.add_row("Baseline 通过率", f"{baseline_result['overall_pass_rate']:.4f}")
-    summary_table.add_row("最优通过率", f"{best_rate:.4f}")
+    summary_table.add_row("Baseline Reward", f"{baseline_result['overall_reward']:.4f}")
+    summary_table.add_row("最优 Reward", f"{best_rate:.4f}")
     summary_table.add_row("总提升", f"{final_improvement:+.4f}")
     summary_table.add_row("演化轮次", str(len(history)))
     summary_table.add_row("接受轮次", str(sum(1 for h in history if h["accepted"])))
@@ -218,7 +209,7 @@ def evolve_skill(
 
     log = _build_log(
         skill_path, status, threshold, mode,
-        baseline_rate=baseline_result["overall_pass_rate"],
+        baseline_rate=baseline_result["overall_reward"],
         evolved_rate=best_rate,
         iterations_done=len(history),
         history=history,
@@ -232,7 +223,7 @@ def _print_baseline_table(baseline_result: dict) -> None:
     """打印 baseline 详细评分表格。"""
     table = Table(title="Baseline 评估详情")
     table.add_column("测试点", style="cyan", max_width=40)
-    table.add_column("通过率", style="green")
+    table.add_column("Reward", style="green")
     table.add_column("平均分", style="yellow")
     table.add_column("Trials", style="dim")
     table.add_column("耗时(s)", style="dim")
@@ -251,7 +242,7 @@ def _print_baseline_table(baseline_result: dict) -> None:
     table.add_section()
     table.add_row(
         "总计",
-        f"{baseline_result['overall_pass_rate']:.4f}",
+        f"{baseline_result['overall_reward']:.4f}",
         "-",
         f"{baseline_result['trials']}/case",
         f"{baseline_result.get('time_total', 0):.1f}",
@@ -285,7 +276,7 @@ def _print_iteration_table(
     """打印单轮对比表格。"""
     table = Table(title=f"轮次 {iteration}")
     table.add_column("版本", style="cyan")
-    table.add_column("通过率", style="green")
+    table.add_column("Reward", style="green")
     table.add_column("提升", style="yellow")
     table.add_column("结果", style="bold")
     table.add_row("当前最优", f"{best_rate:.4f}", "-", "-")
