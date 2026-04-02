@@ -63,6 +63,9 @@ def generate_test_cases(
     response = llm.invoke(prompt)
     response_text = response.content if hasattr(response, "content") else str(response)
 
+    if not response_text or not response_text.strip():
+        raise ValueError("LLM 返回了空响应，请检查 API 配置和网络连接")
+
     # 解析 JSON
     test_cases_data = _extract_json(response_text)
 
@@ -77,8 +80,26 @@ def generate_test_cases(
 
 def _extract_json(text: str) -> dict:
     """从 LLM 响应中提取 JSON。"""
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError(f"LLM 响应为空，无法解析 JSON。原始响应: {text!r}")
+
     # 尝试提取 ```json ... ``` 代码块
-    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", stripped, re.DOTALL)
     if match:
-        text = match.group(1)
-    return json.loads(text.strip())
+        stripped = match.group(1).strip()
+
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError as e:
+        # 尝试找到第一个 { 和最后一个 } 之间的内容
+        start = stripped.find("{")
+        end = stripped.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(stripped[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(
+            f"无法从 LLM 响应中解析 JSON: {e}\n响应前 500 字符: {stripped[:500]}"
+        ) from e
