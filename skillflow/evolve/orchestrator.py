@@ -12,9 +12,21 @@ from rich.table import Table
 from ..core.utils import ensure_dir, load_json, load_text, save_json, save_text
 from ..eval.runner import run_eval
 from ..eval.test_generator import generate_test_cases
+from ..eval.trace import aggregate_case_traces, format_trace_context
+from .guards import check_regression, should_run_eval, snapshot_files
 from .mutator import mutate_skill
 
 console = Console()
+
+# 连续判定"无改进空间"的最大轮次
+MAX_NO_CHANGE = 3
+
+STOP_REASON_MAP = {
+    "converged": "技能已收敛：连续 {n} 轮判定无改进空间",
+    "plateaued": "评估停滞：连续 {patience} 轮无提升",
+    "max_iterations": "达到最大迭代次数",
+    "trivial": "演化无效：连续产出无实质改动",
+}
 
 
 def evolve_skill(
@@ -30,6 +42,7 @@ def evolve_skill(
     ignore_cache: bool = False,
     test_cases_file: str | Path | None = None,
     debug: bool = False,
+    save_trace: bool = False,
 ) -> dict:
     """执行多轮技能演化流程。
 
@@ -46,6 +59,7 @@ def evolve_skill(
         ignore_cache: 是否忽略缓存
         test_cases_file: 测试用例 JSON 文件路径，提供则跳过生成直接加载
         debug: 是否启用 debug 中间件
+        save_trace: 是否将执行轨迹落盘到各 iter-*/trace/ 子目录
 
     Returns:
         演化记录 dict
@@ -85,12 +99,20 @@ def evolve_skill(
         trials=trials,
         parallel=parallel,
         debug=debug,
+        collect_trace=True,
+        output_dir=output_dir,
+        save_trace=save_trace,
     )
-    save_json(output_dir / "baseline.json", baseline_result)
+    save_json(output_dir / "baseline.json",
+              {k: v for k, v in baseline_result.items() if k != "_traces"})
     best_rate = baseline_result["overall_reward"]
+    best_result = baseline_result  # 保存完整结果，用于 case 级回归检测
     best_iter = 0  # 最优版本对应的迭代号（0 = baseline）
     console.print(f"[green]Baseline Reward:[/green] {best_rate:.4f}")
     console.print(f"[blue]演化模式:[/blue] {mode}\n")
+
+    # 生成 baseline 轨迹摘要
+    trace_context = _build_trace_context(baseline_result)
 
     # 打印 baseline 详细评分表格
     _print_baseline_table(baseline_result)
@@ -107,8 +129,11 @@ def evolve_skill(
     best_dir = backup_dir  # 当前最优版本的技能目录
 
     # 迭代演化
-    history = []
+    history: list[dict] = []
     no_improve_count = 0
+    no_change_count = 0
+    stop_reason = "max_iterations"
+    log_file = output_dir / "evolve_log.json"
 
     for iteration in range(1, max_iterations + 1):
         console.rule(f"[bold cyan]演化轮次 {iteration}/{max_iterations} ({mode})[/bold cyan]")
@@ -124,28 +149,125 @@ def evolve_skill(
         else:
             shutil.copytree(best_dir, evolved_skill_dir)
 
-        # 审视 + 可选反思（就地修改 evolved_skill_dir 中的文件）
+        # 快照修改前状态
+        before_snapshot = snapshot_files(evolved_skill_dir)
+
+        # 审视 + 可选反思 + 可选范例提取（就地修改 evolved_skill_dir 中的文件）
         if failed_cases:
             console.print(f"[yellow]{len(failed_cases)} 个失败用例，执行审视+反思[/yellow]")
         else:
             console.print(f"[blue]无失败用例，执行审视[/blue]")
 
-        analysis, strategy = mutate_skill(evolved_skill_dir, failed_cases=failed_cases)
+        # 构建历史策略摘要
+        past_strategies = _build_past_strategies(history) if history else ""
+
+        analysis, strategy, files_changed = mutate_skill(
+            evolved_skill_dir,
+            failed_cases=failed_cases,
+            eval_result=best_result,
+            trace_context=trace_context,
+            past_strategies=past_strategies,
+        )
         save_text(iter_dir / "analysis.md", analysis)
 
-        # 评估演化后的技能
+        # 判断是否有文件修改（audit 判定"无改进空间"的情况）
+        if not files_changed:
+            no_change_count += 1
+            console.print(
+                f"[yellow]本轮未修改文件 ({no_change_count}/{MAX_NO_CHANGE})[/yellow]"
+            )
+            if no_change_count >= MAX_NO_CHANGE:
+                stop_reason = "converged"
+                history.append({
+                    "iteration": iteration,
+                    "mode": mode,
+                    "strategy": strategy,
+                    "base_rate": round(best_rate, 4),
+                    "best_rate": round(best_rate, 4),
+                    "evolved_rate": round(best_rate, 4),
+                    "improvement": 0.0,
+                    "accepted": False,
+                    "skip_reason": "no_changes",
+                    "summary": "判定无改进空间，未修改文件",
+                })
+                console.print(
+                    f"[red]连续 {MAX_NO_CHANGE} 轮无文件修改，技能已收敛。[/red]\n"
+                )
+                _save_running_log(
+                    log_file, skill_path, "running", stop_reason, threshold, mode,
+                    baseline_result["overall_reward"], best_rate, history, best_iter,
+                )
+                break
+            continue
+
+        no_change_count = 0  # 有文件修改则重置计数
+
+        # Diff 初筛：改动太小时调 LLM 语义判断
+        after_snapshot = snapshot_files(evolved_skill_dir)
+        should_run, eval_reason = should_run_eval(before_snapshot, after_snapshot)
+
+        if not should_run:
+            console.print(f"[yellow]改动过于细微，跳过评估: {eval_reason}[/yellow]")
+            history.append({
+                "iteration": iteration,
+                "mode": mode,
+                "strategy": strategy,
+                "base_rate": round(best_rate, 4),
+                "best_rate": round(best_rate, 4),
+                "evolved_rate": round(best_rate, 4),
+                "improvement": 0.0,
+                "accepted": False,
+                "skip_reason": "trivial_change",
+                "summary": f"细微改动被过滤: {eval_reason}",
+            })
+            no_improve_count += 1
+            if no_improve_count >= patience:
+                stop_reason = "plateaued"
+                console.print(
+                    f"[red]连续 {patience} 轮无提升 (patience={patience})，早停。[/red]\n"
+                )
+                _save_running_log(
+                    log_file, skill_path, "running", stop_reason, threshold, mode,
+                    baseline_result["overall_reward"], best_rate, history, best_iter,
+                )
+                break
+            _save_running_log(
+                log_file, skill_path, "running", stop_reason, threshold, mode,
+                baseline_result["overall_reward"], best_rate, history, best_iter,
+            )
+            console.print("")
+            continue
+
+        # 评估演化后的技能（greedy 模式需要采集轨迹）
         evolved_result = run_eval(
             skill_path=evolved_skill_dir,
             test_cases=test_cases,
             trials=trials,
             parallel=parallel,
             debug=debug,
+            collect_trace=(mode == "greedy") or save_trace,
+            output_dir=iter_dir,
+            save_trace=save_trace,
         )
         evolved_rate = evolved_result["overall_reward"]
-        save_json(iter_dir / "eval.json", evolved_result)
+        save_json(iter_dir / "eval.json",
+                  {k: v for k, v in evolved_result.items() if k != "_traces"})
 
         improvement = evolved_rate - best_rate
-        accepted = improvement >= threshold
+        adaptive_thr = _adaptive_threshold(best_rate, threshold)
+
+        # 三重验收：① reward 提升 ② 无 case 回归
+        accepted = improvement >= adaptive_thr
+
+        if accepted:
+            has_reg, reg_details = check_regression(
+                best_result["test_cases"], evolved_result["test_cases"]
+            )
+            if has_reg:
+                accepted = False
+                console.print("[red]Case 回归，拒绝本轮：[/red]")
+                for d in reg_details:
+                    console.print(f"  [red]- {d}[/red]")
 
         summary = analysis.strip().replace("\n", " ")[:200]
 
@@ -159,6 +281,7 @@ def evolve_skill(
             "best_rate": round(best_rate, 4),
             "evolved_rate": round(evolved_rate, 4),
             "improvement": round(improvement, 4),
+            "threshold_used": round(adaptive_thr, 4),
             "accepted": accepted,
             "summary": summary,
         }
@@ -171,6 +294,10 @@ def evolve_skill(
             best_dir = evolved_skill_dir
             best_iter = iteration
             best_rate = evolved_rate
+            best_result = evolved_result
+            # greedy 模式：更新轨迹摘要为当前最优版本
+            if mode == "greedy":
+                trace_context = _build_trace_context(evolved_result)
             no_improve_count = 0
         else:
             no_improve_count += 1
@@ -178,22 +305,39 @@ def evolve_skill(
         # 更新失败用例，供下轮反思使用
         failed_cases = _collect_failed_cases(evolved_result)
 
-        # 早停
+        # 早停：评估停滞
         if no_improve_count >= patience:
+            stop_reason = "plateaued"
             console.print(
                 f"[red]连续 {patience} 轮无提升 (patience={patience})，早停。[/red]\n"
             )
+            _save_running_log(
+                log_file, skill_path, "running", stop_reason, threshold, mode,
+                baseline_result["overall_reward"], best_rate, history, best_iter,
+            )
             break
 
+        _save_running_log(
+            log_file, skill_path, "running", stop_reason, threshold, mode,
+            baseline_result["overall_reward"], best_rate, history, best_iter,
+        )
         console.print("")
 
     # 最终结果：记录最优版本（不修改原技能目录）
     final_improvement = best_rate - baseline_result["overall_reward"]
 
+    # 格式化终止原因
+    stop_detail = STOP_REASON_MAP.get(stop_reason, stop_reason)
+    if stop_reason == "converged":
+        stop_detail = stop_detail.format(n=no_change_count)
+    elif stop_reason == "plateaued":
+        stop_detail = stop_detail.format(patience=patience)
+
     console.rule("[bold green]演化结束[/bold green]")
     summary_table = Table(title="最终结果")
     summary_table.add_column("指标", style="cyan")
     summary_table.add_column("值", style="green")
+    summary_table.add_row("终止原因", stop_detail)
     summary_table.add_row("Baseline Reward", f"{baseline_result['overall_reward']:.4f}")
     summary_table.add_row("最优 Reward", f"{best_rate:.4f}")
     summary_table.add_row("总提升", f"{final_improvement:+.4f}")
@@ -208,7 +352,7 @@ def evolve_skill(
         status = "improved"
 
     log = _build_log(
-        skill_path, status, threshold, mode,
+        skill_path, status, stop_reason, stop_detail, threshold, mode,
         baseline_rate=baseline_result["overall_reward"],
         evolved_rate=best_rate,
         iterations_done=len(history),
@@ -217,6 +361,24 @@ def evolve_skill(
     )
     save_json(output_dir / "evolve_log.json", log)
     return log
+
+
+def _adaptive_threshold(best_rate: float, min_threshold: float) -> float:
+    """根据当前最优 reward 动态调整验收阈值。
+
+    - best_rate < 0.5:  threshold = 0.02（初期容易提升）
+    - 0.5 ~ 0.8:       threshold = 0.03
+    - 0.8 ~ 0.9:       threshold = 0.05（高分段需要确定性）
+    - >= 0.9:          threshold = 0.02（边际递减，放宽避免永远不接受）
+    """
+    if best_rate < 0.5:
+        return max(0.02, min_threshold)
+    elif best_rate < 0.8:
+        return max(0.03, min_threshold)
+    elif best_rate < 0.9:
+        return max(0.05, min_threshold)
+    else:
+        return max(0.02, min_threshold)
 
 
 def _print_baseline_table(baseline_result: dict) -> None:
@@ -266,6 +428,45 @@ def _collect_failed_cases(eval_result: dict) -> list[dict]:
     return failed
 
 
+def _build_past_strategies(history: list[dict]) -> str:
+    """从演化历史中构建策略探索记录，供后续迭代参考。"""
+    if not history:
+        return ""
+
+    lines = ["## 已尝试演化记录\n"]
+    for h in history:
+        tag = "✓" if h.get("accepted") else "✗"
+        skip = h.get("skip_reason", "")
+        summary = h.get("summary", "")
+        rate = h.get("evolved_rate", "")
+        improvement = h.get("improvement", 0)
+
+        entry = f"- 轮次{h['iteration']} [{tag}] 策略={h.get('strategy', '?')}"
+        if rate:
+            entry += f" reward={rate:.4f} ({improvement:+.4f})"
+        if skip:
+            entry += f" 原因={skip}"
+        if summary:
+            entry += f"\n  摘要: {summary[:150]}"
+        lines.append(entry)
+
+    return "\n".join(lines) + "\n"
+
+
+def _build_trace_context(eval_result: dict) -> str:
+    """从 eval 结果中提取轨迹并生成摘要文本。"""
+    traces_by_case = eval_result.get("_traces")
+    if not traces_by_case:
+        return ""
+
+    aggregates = []
+    for case_traces in traces_by_case:
+        if case_traces:
+            aggregates.append(aggregate_case_traces(case_traces))
+
+    return format_trace_context(aggregates) if aggregates else ""
+
+
 def _print_iteration_table(
     iteration: int,
     best_rate: float,
@@ -285,9 +486,42 @@ def _print_iteration_table(
     console.print(table)
 
 
+def _save_running_log(
+    log_file: Path,
+    skill_path: Path,
+    status: str,
+    stop_reason: str,
+    threshold: float,
+    mode: str,
+    baseline_rate: float,
+    best_rate: float,
+    history: list[dict],
+    best_iter: int,
+) -> None:
+    """每轮结束后保存/更新 evolve_log.json，确保崩溃后可恢复。"""
+    log = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "skill": skill_path.name if isinstance(skill_path, Path) else str(skill_path),
+        "status": status,
+        "stop_reason": stop_reason,
+        "mode": mode,
+        "threshold": threshold,
+        "baseline_rate": round(baseline_rate, 4),
+        "evolved_rate": round(best_rate, 4),
+        "improvement": round(best_rate - baseline_rate, 4),
+        "iterations_done": len(history),
+        "accepted_iterations": sum(1 for h in history if h.get("accepted")),
+        "best_iter": best_iter,
+        "history": history,
+    }
+    save_json(log_file, log)
+
+
 def _build_log(
     skill_path: Path,
     status: str,
+    stop_reason: str,
+    stop_detail: str,
     threshold: float,
     mode: str,
     baseline_rate: float,
@@ -301,6 +535,8 @@ def _build_log(
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "skill": skill_path.name if isinstance(skill_path, Path) else str(skill_path),
         "status": status,
+        "stop_reason": stop_reason,
+        "stop_detail": stop_detail,
         "mode": mode,
         "threshold": threshold,
         "baseline_rate": round(baseline_rate, 4),

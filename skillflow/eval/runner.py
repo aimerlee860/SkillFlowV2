@@ -20,6 +20,9 @@ from ..core.prompts import JUDGE_PROMPT
 console = Console()
 debug_logger = logging.getLogger("skillflow.debug")
 
+# JSONL 增量保存文件名
+_PROGRESS_FILE = "eval_progress.jsonl"
+
 
 def judge_response(test_point: str, question: str, response: str) -> tuple[dict, float]:
     """使用 LLM-as-judge 评估响应。
@@ -46,8 +49,11 @@ def _run_single_trial(
     question: str,
     trial_idx: int,
     debug: bool = False,
+    collect_trace: bool = False,
 ) -> dict:
     """运行单次 trial：每次新建 agent 保持上下文干净。"""
+    from .trace import ExecutionTrace, extract_trace
+
     # 阶段 1: 构建 agent
     t_build = time.perf_counter()
     agent = build_agent(
@@ -64,7 +70,7 @@ def _run_single_trial(
 
     # 阶段 2: 运行 agent
     t_agent = time.perf_counter()
-    response = run_agent(agent, question)
+    response, messages = run_agent(agent, question)
     agent_elapsed = time.perf_counter() - t_agent
     console.print(
         f"  [dim]  trial {trial_idx+1}: "
@@ -79,7 +85,7 @@ def _run_single_trial(
         f"judge={judge_elapsed:.2f}s, total={build_elapsed+agent_elapsed+judge_elapsed:.2f}s[/dim]", end=""
     )
 
-    return {
+    result = {
         "trial": trial_idx + 1,
         "pass": judge_result["pass"],
         "score": judge_result["score"],
@@ -91,6 +97,25 @@ def _run_single_trial(
         "time_total": round(build_elapsed + agent_elapsed + judge_elapsed, 2),
     }
 
+    # 阶段 4: 轨迹提取（可选）
+    if collect_trace:
+        trace = extract_trace(messages, trial_idx + 1, test_point, question, skill_path)
+        trace.final_response = response
+        trace.score = judge_result["score"]
+        trace.passed = judge_result["pass"]
+        trace.judge_reason = judge_result["reason"]
+        result["_trace"] = trace
+
+    return result
+
+
+def _append_progress(progress_file: Path, record: dict) -> None:
+    """追加一行 JSONL 记录到进度文件。"""
+    with open(progress_file, "a", encoding="utf-8") as f:
+        # 序列化时去掉 _trace（不可 JSON 化的数据类）
+        clean = {k: v for k, v in record.items() if k != "_trace"}
+        f.write(json.dumps(clean, ensure_ascii=False) + "\n")
+
 
 def run_eval(
     skill_path: str | Path,
@@ -98,6 +123,9 @@ def run_eval(
     trials: int = 5,
     parallel: int = 1,
     debug: bool = False,
+    collect_trace: bool = False,
+    output_dir: str | Path | None = None,
+    save_trace: bool = False,
 ) -> dict:
     """运行技能评估。
 
@@ -107,10 +135,18 @@ def run_eval(
         trials: 每个用例运行次数
         parallel: 全局并发度（1=串行，>1 则所有用例的所有 trial 共享线程池）
         debug: 是否启用 debug 中间件
+        collect_trace: 是否收集执行轨迹
+        output_dir: 输出目录（提供则启用 JSONL 增量保存）
+        save_trace: 是否将执行轨迹落盘（需要 output_dir，隐含 collect_trace）
 
     Returns:
         评估结果 dict
     """
+    # save_trace 隐含 collect_trace
+    if save_trace:
+        collect_trace = True
+    from ..core.utils import ensure_dir, save_json
+
     skill_path = str(Path(skill_path).resolve())
     console.print(f"[blue]技能路径:[/blue] {skill_path}")
 
@@ -119,6 +155,16 @@ def run_eval(
         debug_logger.info("=" * 60)
         debug_logger.info("EVAL START | skill=%s | cases=%d | trials=%d", skill_path, len(test_cases), trials)
         debug_logger.info("=" * 60)
+
+    # 增量保存
+    progress_file = None
+    if output_dir:
+        output_dir = Path(output_dir)
+        ensure_dir(output_dir)
+        progress_file = output_dir / _PROGRESS_FILE
+        # 清除旧进度
+        if progress_file.exists():
+            progress_file.unlink()
 
     results = [None] * len(test_cases)
     total = len(test_cases) * trials
@@ -141,9 +187,20 @@ def run_eval(
                     result = _run_single_trial(
                         skill_path, tc["test_point"], tc["question"], trial_idx,
                         debug=debug,
+                        collect_trace=collect_trace,
                     )
                     case_results.append(result)
                     progress.advance(task)
+
+                    # 每个 trial 完成后追加写入
+                    if progress_file:
+                        _append_progress(progress_file, {
+                            "case_idx": i,
+                            "test_point": tc["test_point"],
+                            "question": tc["question"],
+                            **result,
+                        })
+
                 results[i] = {
                     "test_point": tc["test_point"],
                     "question": tc["question"],
@@ -160,17 +217,27 @@ def run_eval(
                             _run_single_trial,
                             skill_path, tc["test_point"], tc["question"], trial_idx,
                             debug,
+                            collect_trace,
                         )
-                        future_map[future] = (i, trial_idx)
+                        future_map[future] = (i, trial_idx, tc["test_point"], tc["question"])
 
                 # 收集结果
                 case_results_map: dict[int, list[dict]] = defaultdict(list)
                 for future in as_completed(future_map):
-                    case_idx, trial_idx = future_map[future]
+                    case_idx, trial_idx, tp, q = future_map[future]
                     result = future.result()
                     result["trial"] = trial_idx + 1
                     case_results_map[case_idx].append(result)
                     progress.advance(task)
+
+                    # 每个 trial 完成后追加写入
+                    if progress_file:
+                        _append_progress(progress_file, {
+                            "case_idx": case_idx,
+                            "test_point": tp,
+                            "question": q,
+                            **{k: v for k, v in result.items() if k != "_trace"},
+                        })
 
                 for i, tc in enumerate(test_cases):
                     case_results = sorted(case_results_map[i], key=lambda r: r["trial"])
@@ -183,7 +250,94 @@ def run_eval(
     eval_elapsed = time.perf_counter() - t_eval_start
     console.print(f"\n[bold]总评估耗时:[/bold] {eval_elapsed:.1f}s")
 
-    return _build_eval_result(skill_path, test_cases, results, trials)
+    # 正常结束：删除进度文件
+    if progress_file and progress_file.exists():
+        progress_file.unlink()
+
+    result = _build_eval_result(skill_path, test_cases, results, trials, collect_trace)
+
+    if output_dir:
+        # 落盘评估结果
+        clean = {k: v for k, v in result.items() if k != "_traces"}
+        save_json(Path(output_dir) / "eval.json", clean)
+
+        # 落盘轨迹
+        if save_trace and "_traces" in result:
+            from .trace import save_traces
+            save_traces(result["_traces"], Path(output_dir) / "trace")
+
+    return result
+
+
+def load_progress(progress_file: str | Path) -> dict:
+    """从 JSONL 进度文件恢复部分评估结果。
+
+    Args:
+        progress_file: eval_progress.jsonl 路径
+
+    Returns:
+        部分评估结果 dict，结构与完整结果一致，但只包含已完成的 case
+    """
+    progress_file = Path(progress_file)
+    if not progress_file.exists():
+        raise FileNotFoundError(f"进度文件不存在: {progress_file}")
+
+    # 按 case_idx 分组
+    case_map: dict[int, dict] = {}
+    case_trials: dict[int, list[dict]] = defaultdict(list)
+
+    with open(progress_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            idx = record["case_idx"]
+            case_map[idx] = {
+                "test_point": record["test_point"],
+                "question": record["question"],
+            }
+            case_trials[idx].append({
+                "trial": record["trial"],
+                "pass": record["pass"],
+                "score": record["score"],
+                "reason": record["reason"],
+                "response": record.get("response", ""),
+                "time_total": record.get("time_total", 0),
+            })
+
+    # 构建 case results
+    from .metrics import compute_case_metrics, compute_overall_reward
+
+    case_results = []
+    case_rewards = []
+
+    for idx in sorted(case_map.keys()):
+        trials_list = sorted(case_trials[idx], key=lambda r: r["trial"])
+        case = {
+            **case_map[idx],
+            "results": trials_list,
+        }
+        passes = sum(1 for r in trials_list if r["pass"])
+        case["pass_rate"] = passes / len(trials_list) if trials_list else 0.0
+        case["time_total"] = round(sum(r.get("time_total", 0) for r in trials_list), 2)
+
+        metrics = compute_case_metrics(trials_list)
+        case.update(metrics)
+        case_rewards.append(metrics["reward"])
+        case_results.append(case)
+
+    overall_reward = compute_overall_reward(case_rewards) if case_rewards else 0.0
+
+    return {
+        "skill": Path(progress_file).parent.name,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "partial": True,
+        "completed_cases": len(case_results),
+        "total_cases_hint": max(case_map.keys()) + 1 if case_map else 0,
+        "test_cases": case_results,
+        "overall_reward": overall_reward,
+    }
 
 
 def _build_eval_result(
@@ -191,12 +345,22 @@ def _build_eval_result(
     test_cases: list[dict],
     case_results: list[dict],
     trials: int,
+    collect_trace: bool = False,
 ) -> dict:
     """构建完整的评估结果。"""
     from .metrics import compute_case_metrics, compute_overall_reward
 
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
     skill_name = Path(skill_path).name
+
+    # 提取轨迹（在 case_results 被 update 前收集）
+    traces_by_case: list[list] = []
+    if collect_trace:
+        for case in case_results:
+            case_traces = [
+                r.pop("_trace") for r in case["results"] if "_trace" in r
+            ]
+            traces_by_case.append(case_traces)
 
     case_rewards = []
     for case in case_results:
@@ -210,7 +374,7 @@ def _build_eval_result(
 
     overall_reward = compute_overall_reward(case_rewards)
 
-    return {
+    result = {
         "skill": skill_name,
         "timestamp": timestamp,
         "trials": trials,
@@ -219,6 +383,11 @@ def _build_eval_result(
         "time_total": round(sum(c.get("time_total", 0) for c in case_results), 2),
         "overall_reward": overall_reward,
     }
+
+    if collect_trace:
+        result["_traces"] = traces_by_case
+
+    return result
 
 
 def _extract_judge_result(text: str) -> dict:

@@ -67,15 +67,15 @@ def build_agent(
     )
 
 
-def run_agent(agent: Any, prompt: str) -> str:
-    """运行 agent 并提取最终响应文本。
+def run_agent(agent: Any, prompt: str) -> tuple[str, list]:
+    """运行 agent 并提取最终响应文本和完整消息列表。
 
     Args:
         agent: 编译后的 LangGraph 图
         prompt: 用户输入
 
     Returns:
-        agent 的最终响应文本
+        (最终响应文本, 完整 messages 列表)
     """
     result = agent.invoke(
         {"messages": [{"role": "user", "content": prompt}]}
@@ -84,8 +84,8 @@ def run_agent(agent: Any, prompt: str) -> str:
     # 取最后一条 AI 消息
     for msg in reversed(messages):
         if hasattr(msg, "content") and msg.type == "ai":
-            return msg.content
+            return msg.content, messages
     # fallback: 取最后一条消息的 content
     if messages:
-        return str(messages[-1].content)
-    return ""
+        return str(messages[-1].content), messages
+    return "", messages

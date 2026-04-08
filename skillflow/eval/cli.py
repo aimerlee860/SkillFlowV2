@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ..core.utils import ensure_dir, load_json, save_json, validate_skill_dir
+from ..core.utils import ensure_dir, load_json, validate_skill_dir
 from .runner import run_eval
 from .test_generator import generate_test_cases
 
@@ -33,6 +33,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("--ignore-cache", action="store_true", help="忽略缓存重新生成测试用例")
     parser.add_argument("--debug", action="store_true", help="启用 debug 中间件，输出 agent 执行详细日志")
+    parser.add_argument("--save-trace", action="store_true", help="将执行轨迹落盘到 eval/trace/ 目录")
     parser.add_argument(
         "--init",
         action="store_true",
@@ -81,22 +82,18 @@ def _run(args: argparse.Namespace) -> None:
     if args.init_only:
         return
 
-    # 运行评估
+    # 运行评估（结果由 run_eval 内部保存到 eval/<timestamp>/ 子目录）
+    timestamp = time.strftime("%Y%m%d%H%M")
+    eval_dir = str(Path(output) / "eval" / timestamp)
     result = run_eval(
         skill_path=args.skill,
         test_cases=test_cases,
         trials=args.trials,
         parallel=args.parallel,
         debug=args.debug,
+        output_dir=eval_dir,
+        save_trace=args.save_trace,
     )
 
-    # 保存结果：使用与 test_cases 相同的时间戳，若 --skip-init 则用当前时间
-    if tc_filename:
-        ts = tc_filename.replace("test_cases_", "").replace(".json", "")
-    else:
-        ts = time.strftime("%Y%m%d%H%M")
-    ensure_dir(output)
-    result_file = f"{output}/eval_result_{ts}.json"
-    save_json(result_file, result)
-    console.print(f"[green]评估结果已保存:[/green] {result_file}")
+    console.print(f"[green]评估结果已保存:[/green] {eval_dir}")
     console.print(f"[green]Overall Reward:[/green] {result['overall_reward']}")

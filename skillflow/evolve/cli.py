@@ -51,6 +51,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("--ignore-cache", action="store_true", help="忽略缓存")
     parser.add_argument("--debug", action="store_true", help="启用 debug 中间件")
+    parser.add_argument("--save-trace", action="store_true", help="将执行轨迹落盘到各 iter-*/trace/ 目录")
     parser.add_argument(
         "--test-cases",
         default=None,
@@ -81,4 +82,5 @@ def _run(args: argparse.Namespace) -> None:
         ignore_cache=args.ignore_cache,
         test_cases_file=args.test_cases,
         debug=args.debug,
+        save_trace=args.save_trace,
     )
