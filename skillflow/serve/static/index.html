@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SkillFlow</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f9fa; color: #333; }
+
+/* Header */
+.header { background: #fff; border-bottom: 1px solid #e0e0e0; padding: 12px 24px; display: flex; align-items: center; gap: 32px; }
+.header h1 { font-size: 18px; font-weight: 600; color: #1a1a1a; }
+.header .task-indicator { margin-left: auto; font-size: 13px; color: #888; }
+.header .task-indicator .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.header .task-indicator .dot.idle { background: #ccc; }
+.header .task-indicator .dot.running { background: #4caf50; animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* Tabs */
+.tabs { display: flex; gap: 0; background: #fff; border-bottom: 2px solid #e0e0e0; padding: 0 24px; }
+.tab { padding: 10px 20px; cursor: pointer; font-size: 14px; color: #666; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; }
+.tab:hover { color: #333; }
+.tab.active { color: #1976d2; border-bottom-color: #1976d2; font-weight: 500; }
+
+/* Content */
+.content { max-width: 960px; margin: 24px auto; padding: 0 24px; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* Cards */
+.card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+.card h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; }
+
+/* Form */
+.form-row { display: flex; gap: 12px; margin-bottom: 12px; align-items: center; }
+.form-row label { font-size: 13px; color: #555; min-width: 80px; }
+.form-row select, .form-row input[type="text"], .form-row input[type="number"] {
+  flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; background: #fff;
+}
+.spec-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+.spec-row label { font-size: 13px; color: #555; min-width: 80px; }
+.spec-row select, .spec-row input { flex: 1; }
+textarea.spec-editor {
+  width: 100%; min-height: 200px; padding: 12px; border: 1px solid #ddd; border-radius: 4px;
+  font-family: "SF Mono", Monaco, monospace; font-size: 12px; resize: vertical; background: #fafafa; color: #333;
+}
+textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
+.form-row select:focus, .form-row input:focus { outline: none; border-color: #1976d2; }
+.form-row input[type="range"] { flex: 1; }
+.form-row .range-value { font-size: 13px; color: #555; min-width: 36px; text-align: center; }
+.checkbox-row { display: flex; gap: 16px; margin-bottom: 12px; }
+.checkbox-row label { font-size: 13px; color: #555; display: flex; align-items: center; gap: 6px; }
+
+/* Button */
+.btn { padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.2s; }
+.btn-primary { background: #1976d2; color: #fff; }
+.btn-primary:hover { background: #1565c0; }
+.btn-primary:disabled { background: #bbb; cursor: not-allowed; }
+.btn-danger { background: #fff; color: #d32f2f; border: 1px solid #d32f2f; }
+.btn-danger:hover { background: #ffebee; }
+.btn-outline { background: #fff; color: #1976d2; border: 1px solid #d0d0d0; padding: 5px 14px; font-size: 12px; }
+.btn-outline:hover { border-color: #1976d2; background: #f5f9ff; }
+
+/* Progress */
+.progress-area { min-height: 40px; }
+.log-line { font-family: "SF Mono", Monaco, monospace; font-size: 12px; color: #555; padding: 2px 0; }
+.log-line.success { color: #2e7d32; }
+.log-line.error { color: #d32f2f; }
+.log-line.info { color: #1565c0; }
+
+/* Results table */
+.result-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+.result-table th { text-align: left; padding: 8px 12px; background: #f5f5f5; border-bottom: 2px solid #e0e0e0; color: #555; font-weight: 600; }
+.result-table td { padding: 8px 12px; border-bottom: 1px solid #eee; }
+.result-table tr:hover td { background: #fafafa; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+.badge-pass { background: #e8f5e9; color: #2e7d32; }
+.badge-fail { background: #ffebee; color: #c62828; }
+.badge-accepted { background: #e8f5e9; color: #2e7d32; }
+.badge-rejected { background: #ffebee; color: #c62828; }
+
+/* Summary */
+.summary-box { background: #f5f5f5; border-radius: 6px; padding: 16px; margin-top: 12px; }
+.summary-box .metric { display: inline-block; margin-right: 24px; }
+.summary-box .metric .label { font-size: 12px; color: #888; }
+.summary-box .metric .value { font-size: 20px; font-weight: 600; color: #1a1a1a; }
+
+/* Skill content preview */
+.content-preview { background: #f5f5f5; border-radius: 6px; padding: 16px; margin-top: 12px; max-height: 400px; overflow-y: auto; }
+.content-preview pre { font-family: "SF Mono", Monaco, monospace; font-size: 12px; white-space: pre-wrap; color: #333; }
+
+/* Test cases textarea */
+.tc-area { margin-top: 8px; margin-bottom: 12px; }
+.tc-area textarea {
+  width: 100%; min-height: 160px; padding: 12px; border: 1px solid #ddd; border-radius: 4px;
+  font-family: "SF Mono", Monaco, monospace; font-size: 12px; resize: vertical; background: #fafafa; color: #333;
+}
+.tc-area textarea:focus { outline: none; border-color: #1976d2; }
+.tc-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+
+/* Evolve history chart */
+.chart-container { margin-top: 12px; height: 200px; position: relative; }
+.chart-bar { position: absolute; bottom: 0; width: 20px; border-radius: 2px 2px 0 0; transition: all 0.3s; }
+.chart-bar.accepted { background: #4caf50; }
+.chart-bar.rejected { background: #ef5350; }
+.chart-bar.skip { background: #bdbdbd; }
+.chart-label { position: absolute; bottom: -18px; font-size: 10px; color: #888; width: 20px; text-align: center; }
+.chart-y-axis { position: absolute; left: 0; width: 100%; border-top: 1px dashed #ddd; }
+.chart-y-label { position: absolute; left: -30px; font-size: 10px; color: #888; transform: translateY(-50%); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>SkillFlow</h1>
+  <div class="task-indicator" id="taskIndicator">
+    <span class="dot idle"></span> <span id="taskStatus">空闲</span>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="create">Create</div>
+  <div class="tab" data-tab="eval">Eval</div>
+  <div class="tab" data-tab="evolve">Evolve</div>
+</div>
+
+<div class="content">
+
+  <!-- Create Tab -->
+  <div class="tab-panel active" id="panel-create">
+    <div class="card">
+      <h3>Create Skill</h3>
+      <div class="spec-row">
+        <label>Spec</label>
+        <select id="create-spec" onchange="onCreateSpecChange()"><option value="">-- 选择已有 Spec --</option></select>
+        <input type="file" id="create-spec-file" accept=".yaml,.yml" style="font-size:12px" onchange="onCreateFileSelect(this)">
+      </div>
+      <textarea class="spec-editor" id="create-spec-content" placeholder="在此编辑 Spec YAML 内容，或从上方选择已有 Spec / 上传文件..."
+>description: "代码审查助手 - 自动审查代码并提供改进建议"
+
+scene:
+  - "开发者提交 PR 后需要快速获得代码质量反馈"
+  - "团队 code review 时需要标准化的审查建议"
+  - "个人开发者想检查自己代码的潜在问题"
+
+input_output:
+  input: "一段代码（支持 Python、JavaScript、Go 等主流语言）"
+  output: "结构化的审查报告，包含问题列表、严重等级和改进建议"
+
+rule:
+  - "必须从安全性、性能、可读性、正确性四个维度审查"
+  - "每个问题必须标注严重等级（critical/warning/info）"
+  - "不要只指出问题，必须同时给出具体的修复建议和代码示例"
+
+example:
+  - input: |
+      def login(username, password):
+          query = f"SELECT * FROM users WHERE username='{username}' AND password='{password}'"
+          result = db.execute(query)
+          return result.fetchone()
+    output: |
+      ## 审查报告
+
+      ### [CRITICAL] SQL 注入漏洞
+      使用字符串拼接构建 SQL 查询，存在 SQL 注入风险。
+      **建议：** 使用参数化查询。
+      ```python
+      query = "SELECT * FROM users WHERE username=? AND password=?"
+      result = db.execute(query, (username, password))
+      ```
+
+      ### [CRITICAL] 明文密码比较
+      密码未使用哈希比较，存在安全隐患。
+      **建议：** 使用 bcrypt 或 argon2 进行密码哈希验证。
+
+      ### [WARNING] 缺少错误处理
+      数据库查询可能失败但未处理异常。
+
+  - input: |
+      function fibonacci(n) {
+        if (n <= 0) return 0;
+        if (n === 1) return 1;
+        return fibonacci(n - 1) + fibonacci(n - 2);
+      }
+    output: |
+      ## 审查报告
+
+      ### [WARNING] 指数级时间复杂度
+      递归实现导致 O(2^n) 时间复杂度，n 较大时性能极差。
+      **建议：** 使用动态规划或迭代方式。
+      ```javascript
+      function fibonacci(n) {
+        if (n <= 0) return 0;
+        if (n === 1) return 1;
+        let a = 0, b = 1;
+        for (let i = 2; i <= n; i++) {
+          [a, b] = [b, a + b];
+        }
+        return b;
+      }
+      ```
+
+      ### [INFO] 缺少输入验证
+      未验证 n 是否为整数或负数。
+
+reference: []</textarea>
+      <div style="margin-top:8px;margin-bottom:20px;text-align:right">
+        <button class="btn btn-outline" onclick="saveSpec()">保存为 Spec</button>
+      </div>
+      <div class="form-row">
+        <label>技能名称</label>
+        <input type="text" id="create-name" placeholder="my-skill">
+      </div>
+      <div class="form-row">
+        <label>语言</label>
+        <select id="create-lang">
+          <option value="auto">auto</option>
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="create-btn" onclick="startCreate()">创建技能</button>
+    </div>
+  </div>
+
+  <!-- Eval Tab -->
+  <div class="tab-panel" id="panel-eval">
+    <div class="card">
+      <h3>Evaluate Skill</h3>
+      <div class="form-row">
+        <label>Skill</label>
+        <select id="eval-skill" onchange="onEvalSkillChange()"><option value="">-- 选择 Skill --</option></select>
+      </div>
+      <div class="form-row">
+        <label>Spec</label>
+        <select id="eval-spec"><option value="">-- 可选 --</option></select>
+      </div>
+      <div style="margin-top:12px;margin-bottom:4px;font-size:13px;color:#555;display:flex;justify-content:space-between;align-items:center">
+        <span>测试用例</span>
+        <div class="tc-actions" style="margin:0">
+          <button class="btn btn-outline" id="eval-gen-tc-btn" onclick="generateEvalTestCases()">生成测试用例</button>
+          <button class="btn btn-outline" onclick="saveEvalTestCases()">保存</button>
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label>已保存</label>
+        <select id="eval-tc-select" onchange="onEvalTcSelect()"><option value="">-- 选择已保存的测试用例 --</option></select>
+      </div>
+      <div class="tc-area">
+        <textarea id="eval-tc-content" placeholder="点击「生成测试用例」自动生成，或选择已保存的测试用例，也可手动编辑 JSON&#10;&#10;格式: [{&quot;test_point&quot;: &quot;...&quot;, &quot;question&quot;: &quot;...&quot;}]" oninput="onEvalTcEdit()"></textarea>
+      </div>
+      <div class="form-row">
+        <label>Trials</label>
+        <input type="number" id="eval-trials" value="5" min="1" max="50">
+      </div>
+      <div class="form-row">
+        <label>Parallel</label>
+        <input type="number" id="eval-parallel" value="1" min="1" max="10">
+      </div>
+      <div class="checkbox-row">
+        <label><input type="checkbox" id="eval-save-trace"> 保存 Trace</label>
+        <label><input type="checkbox" id="eval-ignore-cache"> 忽略缓存</label>
+        <label><input type="checkbox" id="eval-debug"> Debug 模式</label>
+      </div>
+      <button class="btn btn-primary" id="eval-btn" onclick="startEval()">运行评估</button>
+    </div>
+  </div>
+
+  <!-- Evolve Tab -->
+  <div class="tab-panel" id="panel-evolve">
+    <div class="card">
+      <h3>Evolve Skill</h3>
+      <div class="form-row">
+        <label>Skill</label>
+        <select id="evolve-skill" onchange="onEvolveSkillChange()"><option value="">-- 选择 Skill --</option></select>
+      </div>
+      <div class="form-row">
+        <label>Spec</label>
+        <select id="evolve-spec"><option value="">-- 可选 --</option></select>
+      </div>
+      <div class="form-row">
+        <label>测试用例</label>
+        <select id="evolve-tc-select" onchange="onEvolveTcModeChange()">
+          <option value="">自动生成</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Iterations</label>
+        <input type="number" id="evolve-iterations" value="100" min="1" max="1000">
+      </div>
+      <div class="form-row">
+        <label>Patience</label>
+        <input type="number" id="evolve-patience" value="10" min="1" max="100">
+      </div>
+      <div class="form-row">
+        <label>Mode</label>
+        <select id="evolve-mode">
+          <option value="steady">steady（保守）</option>
+          <option value="greedy">greedy（激进）</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Speed</label>
+        <input type="range" id="evolve-speed" min="0.1" max="1.0" step="0.1" value="0.3" oninput="document.getElementById('speed-val').textContent=this.value">
+        <span class="range-value" id="speed-val">0.3</span>
+      </div>
+      <div class="form-row">
+        <label>Threshold</label>
+        <input type="number" id="evolve-threshold" value="0.01" min="0" max="1" step="0.005">
+      </div>
+      <div class="form-row">
+        <label>Trials</label>
+        <input type="number" id="evolve-trials" value="5" min="1" max="50">
+      </div>
+      <div class="checkbox-row">
+        <label><input type="checkbox" id="evolve-ignore-cache"> 忽略缓存</label>
+        <label><input type="checkbox" id="evolve-save-trace"> 保存 Trace</label>
+        <label><input type="checkbox" id="evolve-debug"> Debug 模式</label>
+      </div>
+      <button class="btn btn-primary" id="evolve-btn" onclick="startEvolve()">开始演化</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// --- Tab switching ---
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// --- Data loading ---
+async function loadOptions() {
+  const [skills, specs] = await Promise.all([
+    fetch('/api/skills').then(r => r.json()),
+    fetch('/api/specs').then(r => r.json()),
+  ]);
+  fillSelect('eval-skill', skills);
+  fillSelect('evolve-skill', skills);
+  fillSelect('create-spec', specs);
+  fillSelect('eval-spec', specs, true);
+  fillSelect('evolve-spec', specs, true);
+}
+
+function fillSelect(id, items, optional = false) {
+  const sel = document.getElementById(id);
+  const first = sel.options[0];
+  sel.innerHTML = '';
+  sel.appendChild(first);
+  if (optional) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '-- 不使用 --';
+    sel.appendChild(opt);
+  }
+  items.forEach(item => {
+    const opt = document.createElement('option');
+    opt.value = item.name;
+    opt.textContent = item.name;
+    sel.appendChild(opt);
+  });
+}
+
+loadOptions();
+
+// --- Test cases management ---
+let _evalTcEdited = false;
+let _evalTcCurrentName = ''; // 当前加载的测试用例名称
+
+function formatTestCases(tcList) {
+  if (!tcList) return '';
+  return JSON.stringify(tcList, null, 2);
+}
+
+function parseTcContent(content) {
+  let testCases = JSON.parse(content);
+  if (!Array.isArray(testCases)) {
+    if (testCases.test_cases && Array.isArray(testCases.test_cases)) {
+      testCases = testCases.test_cases;
+    } else {
+      throw new Error('格式错误');
+    }
+  }
+  return testCases;
+}
+
+// 加载某技能的测试用例列表
+async function listTestCases(skillName) {
+  if (!skillName) return [];
+  return await fetch('/api/test-cases/' + encodeURIComponent(skillName)).then(r => r.json());
+}
+
+// 填充测试用例下拉框
+function fillTcSelect(selectId, items) {
+  const sel = document.getElementById(selectId);
+  const first = sel.options[0];
+  sel.innerHTML = '';
+  sel.appendChild(first);
+  items.forEach(item => {
+    const opt = document.createElement('option');
+    opt.value = item.name;
+    opt.textContent = item.name;
+    sel.appendChild(opt);
+  });
+}
+
+// Eval Tab: skill change → 刷新测试用例下拉框
+async function onEvalSkillChange() {
+  const skill = document.getElementById('eval-skill').value;
+  _evalTcEdited = false;
+  _evalTcCurrentName = '';
+  document.getElementById('eval-tc-content').value = '';
+  if (skill) {
+    const items = await listTestCases(skill);
+    fillTcSelect('eval-tc-select', items);
+  } else {
+    fillTcSelect('eval-tc-select', []);
+  }
+}
+
+// Eval Tab: 选择已保存的测试用例
+async function onEvalTcSelect() {
+  const skill = document.getElementById('eval-skill').value;
+  const name = document.getElementById('eval-tc-select').value;
+  if (!skill || !name) return;
+  const data = await fetch('/api/test-cases/' + encodeURIComponent(skill) + '/' + encodeURIComponent(name)).then(r => r.json());
+  if (data.error) return alert(data.error);
+  document.getElementById('eval-tc-content').value = formatTestCases(data.test_cases);
+  _evalTcEdited = false;
+  _evalTcCurrentName = name;
+}
+
+function onEvalTcEdit() {
+  _evalTcEdited = true;
+}
+
+// Save test cases (prompt for name)
+async function saveEvalTestCases() {
+  const skill = document.getElementById('eval-skill').value;
+  if (!skill) return alert('请先选择 Skill');
+  const content = document.getElementById('eval-tc-content').value.trim();
+  if (!content) return alert('测试用例为空');
+  let testCases;
+  try {
+    testCases = parseTcContent(content);
+  } catch(e) {
+    return alert('JSON 格式错误: ' + e.message);
+  }
+  const defaultName = _evalTcCurrentName || 'default';
+  const name = prompt('请输入测试用例名称:', defaultName);
+  if (!name || !name.trim()) return;
+
+  const resp = await fetch('/api/test-cases/' + encodeURIComponent(skill), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name.trim(), test_cases: testCases}),
+  }).then(r => r.json());
+  if (resp.error) return alert('保存失败: ' + resp.error);
+  _evalTcCurrentName = name.trim();
+  // 刷新 eval 和 evolve 的测试用例下拉框
+  const items = await listTestCases(skill);
+  fillTcSelect('eval-tc-select', items);
+  document.getElementById('eval-tc-select').value = name.trim();
+  // 如果 evolve 也选中了同一个 skill，同步刷新
+  const evolveSkill = document.getElementById('evolve-skill').value;
+  if (evolveSkill === skill) {
+    fillTcSelect('evolve-tc-select', items);
+  }
+  alert('已保存 ' + resp.saved + ' 条测试用例为「' + name.trim() + '」');
+}
+
+// Generate test cases only
+async function generateEvalTestCases() {
+  const skill = document.getElementById('eval-skill').value;
+  if (!skill) return alert('请先选择 Skill');
+
+  const btn = document.getElementById('eval-gen-tc-btn');
+  btn.disabled = true;
+  btn.textContent = '生成中...';
+
+  const spec = document.getElementById('eval-spec').value || null;
+  const resp = await fetch('/api/test-cases/' + encodeURIComponent(skill) + '/generate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({spec, ignore_cache: document.getElementById('eval-ignore-cache').checked}),
+  }).then(r => r.json());
+
+  if (resp.error) {
+    alert(resp.error);
+    btn.disabled = false;
+    btn.textContent = '生成测试用例';
+    return;
+  }
+
+  const taskId = resp.task_id;
+  addRunningTask(taskId);
+
+  connectSSE(
+    '/api/test-cases/' + encodeURIComponent(skill) + '/generate/' + taskId + '/progress', taskId,
+    (data) => {
+      if (data.type === 'status') {
+        btn.textContent = data.message;
+      }
+    },
+    (data) => {
+      btn.disabled = false;
+      btn.textContent = '生成测试用例';
+      if (data.status === 'completed' && data.result && data.result.test_cases) {
+        document.getElementById('eval-tc-content').value = formatTestCases(data.result.test_cases);
+        _evalTcEdited = true;
+        _evalTcCurrentName = '';
+      }
+    }
+  );
+}
+
+// Evolve Tab: skill change → 刷新测试用例下拉框
+async function onEvolveSkillChange() {
+  const skill = document.getElementById('evolve-skill').value;
+  if (skill) {
+    const items = await listTestCases(skill);
+    fillTcSelect('evolve-tc-select', items);
+  } else {
+    fillTcSelect('evolve-tc-select', []);
+  }
+}
+
+function onEvolveTcModeChange() {}
+
+// --- Multi-task tracking ---
+const runningTasks = new Set();
+
+function addRunningTask(taskId) {
+  runningTasks.add(taskId);
+  updateTaskIndicator();
+}
+
+function removeRunningTask(taskId) {
+  runningTasks.delete(taskId);
+  updateTaskIndicator();
+}
+
+function updateTaskIndicator() {
+  const dot = document.querySelector('#taskIndicator .dot');
+  const text = document.getElementById('taskStatus');
+  const count = runningTasks.size;
+  if (count > 0) {
+    dot.className = 'dot running';
+    text.textContent = count + ' 个任务运行中';
+  } else {
+    dot.className = 'dot idle';
+    text.textContent = '空闲';
+  }
+}
+
+// --- SSE helper ---
+function connectSSE(url, taskId, onEvent, onDone) {
+  const es = new EventSource(url);
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'done') {
+      es.close();
+      removeRunningTask(taskId);
+      if (onDone) onDone(data);
+    } else {
+      if (onEvent) onEvent(data);
+    }
+  };
+  es.onerror = () => {
+    es.close();
+    removeRunningTask(taskId);
+  };
+  return es;
+}
+
+// --- Create task card for each running task ---
+function createTaskCard(panelId, taskId, label) {
+  const panel = document.getElementById(panelId);
+  // 在表单 card 后面插入
+  const formCard = panel.querySelector('.card');
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.id = 'task-card-' + taskId;
+  card.innerHTML = `
+    <h3 style="display:flex;justify-content:space-between;align-items:center">
+      <span>${label}</span>
+      <span style="font-size:11px;color:#888;font-weight:400">${taskId}</span>
+    </h3>
+    <div class="progress-area" id="log-${taskId}"></div>
+    <div id="live-table-area-${taskId}"></div>
+    <div id="result-area-${taskId}"></div>
+  `;
+  formCard.insertAdjacentElement('afterend', card);
+  return card;
+}
+
+// --- Log helper ---
+function appendLog(taskId, message, cls = '') {
+  const el = document.getElementById('log-' + taskId);
+  if (!el) return;
+  const line = document.createElement('div');
+  line.className = 'log-line ' + cls;
+  line.textContent = message;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ========== CREATE ==========
+
+// 选择已有 spec 时加载内容到编辑区
+async function onCreateSpecChange() {
+  const sel = document.getElementById('create-spec');
+  const name = sel.value;
+  if (!name) return;
+  const content = await fetch('/api/spec-content/' + encodeURIComponent(name)).then(r => r.text());
+  document.getElementById('create-spec-content').value = content;
+}
+
+// 选择本地文件时加载内容到编辑区
+function onCreateFileSelect(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    document.getElementById('create-spec-content').value = e.target.result;
+    document.getElementById('create-spec').value = '';
+  };
+  reader.readAsText(file);
+}
+
+// 保存编辑区内容为 Spec 文件
+async function saveSpec() {
+  const content = document.getElementById('create-spec-content').value.trim();
+  if (!content) return alert('编辑区为空，请先输入 Spec 内容');
+  const name = prompt('请输入 Spec 文件名（不需要 .yaml 后缀）:');
+  if (!name || !name.trim()) return;
+  const resp = await fetch('/api/specs', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name.trim(), content}),
+  }).then(r => r.json());
+  if (resp.error) return alert('保存失败: ' + resp.error);
+  const specs = await fetch('/api/specs').then(r => r.json());
+  fillSelect('create-spec', specs);
+  fillSelect('eval-spec', specs, true);
+  fillSelect('evolve-spec', specs, true);
+  document.getElementById('create-spec').value = resp.name;
+  alert('已保存: ' + resp.name);
+}
+
+async function startCreate() {
+  const name = document.getElementById('create-name').value.trim();
+  const lang = document.getElementById('create-lang').value;
+  const specContent = document.getElementById('create-spec-content').value.trim();
+  const specName = document.getElementById('create-spec').value;
+
+  if (!specContent && !specName) return alert('请输入 Spec 内容、选择已有 Spec 或上传文件');
+  if (!name) return alert('请输入技能名称');
+
+  const resp = await fetch('/api/create', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, spec: specName, spec_content: specContent, lang}),
+  }).then(r => r.json());
+
+  if (resp.error) return alert(resp.error);
+
+  const taskId = resp.task_id;
+  createTaskCard('panel-create', taskId, '创建: ' + name);
+  addRunningTask(taskId);
+
+  connectSSE(
+    `/api/create/${taskId}/progress`, taskId,
+    (data) => {
+      if (data.type === 'status') appendLog(taskId, data.message, 'info');
+    },
+    (data) => {
+      if (data.status === 'completed') {
+        appendLog(taskId, '技能创建完成!', 'success');
+        loadSkillContent(name, taskId);
+      } else {
+        appendLog(taskId, '创建失败: ' + (data.error || ''), 'error');
+      }
+    }
+  );
+}
+
+async function loadSkillContent(name, taskId) {
+  const content = await fetch(`/api/skill-content/${name}`).then(r => r.text());
+  const area = document.getElementById('result-area-' + taskId);
+  area.innerHTML = `<div class="content-preview"><pre>${content.replace(/</g, '&lt;')}</pre></div>`;
+}
+
+// ========== EVAL ==========
+
+async function startEval() {
+  const skill = document.getElementById('eval-skill').value;
+  if (!skill) return alert('请选择 Skill');
+
+  // textarea 有内容就使用，否则自动生成
+  const tcContent = document.getElementById('eval-tc-content').value.trim();
+
+  const req = {
+    skill,
+    spec: document.getElementById('eval-spec').value || null,
+    trials: parseInt(document.getElementById('eval-trials').value),
+    parallel: parseInt(document.getElementById('eval-parallel').value),
+    debug: document.getElementById('eval-debug').checked,
+    save_trace: document.getElementById('eval-save-trace').checked,
+    ignore_cache: document.getElementById('eval-ignore-cache').checked,
+    test_cases_content: tcContent || null,
+  };
+
+  const resp = await fetch('/api/eval', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(req),
+  }).then(r => r.json());
+
+  if (resp.error) return alert(resp.error);
+
+  const taskId = resp.task_id;
+  const card = createTaskCard('panel-eval', taskId, '评估: ' + skill);
+
+  // 添加 live table
+  const tableArea = document.getElementById('live-table-area-' + taskId);
+  tableArea.innerHTML = `<table class="result-table" id="live-table-${taskId}" style="display:none">
+    <thead><tr><th>测试点</th><th>Trial</th><th>得分</th><th>结果</th></tr></thead>
+    <tbody></tbody></table>`;
+
+  addRunningTask(taskId);
+
+  connectSSE(
+    `/api/eval/${taskId}/progress`, taskId,
+    (data) => {
+      if (data.type === 'status') {
+        appendLog(taskId, data.message, 'info');
+      } else if (data.type === 'test_cases') {
+        // 自动生成的测试用例回填到 textarea
+        document.getElementById('eval-tc-content').value = formatTestCases(data.data);
+      } else if (data.type === 'progress') {
+        const d = data.data;
+        const table = document.getElementById('live-table-' + taskId);
+        table.style.display = 'table';
+        const tbody = table.querySelector('tbody');
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${(d.test_point || '').substring(0, 40)}</td>
+          <td>${d.trial || ''}</td>
+          <td>${d.score != null ? d.score.toFixed(2) : ''}</td>
+          <td><span class="badge ${d.pass ? 'badge-pass' : 'badge-fail'}">${d.pass ? 'PASS' : 'FAIL'}</span></td>`;
+        tbody.appendChild(row);
+      }
+    },
+    (data) => {
+      if (data.status === 'completed') {
+        appendLog(taskId, '评估完成!', 'success');
+        showEvalResult(taskId, data.result);
+      } else {
+        appendLog(taskId, '评估失败: ' + (data.error || ''), 'error');
+      }
+    }
+  );
+}
+
+function showEvalResult(taskId, result) {
+  if (!result) return;
+  const area = document.getElementById('result-area-' + taskId);
+  area.innerHTML = `
+    <div class="summary-box">
+      <div class="metric"><div class="label">Overall Reward</div><div class="value">${(result.overall_reward || 0).toFixed(4)}</div></div>
+      <div class="metric"><div class="label">Total Cases</div><div class="value">${result.total_cases || 0}</div></div>
+      <div class="metric"><div class="label">Trials</div><div class="value">${result.trials || 0}</div></div>
+    </div>
+    <table class="result-table"><thead><tr><th>测试点</th><th>Pass Rate</th><th>Reward</th><th>耗时</th></tr></thead>
+    <tbody>${(result.test_cases || []).map(tc => `<tr>
+      <td>${(tc.test_point || '').substring(0, 50)}</td>
+      <td>${(tc.pass_rate || 0).toFixed(2)}</td>
+      <td>${(tc.reward || 0).toFixed(4)}</td>
+      <td>${(tc.time_total || 0).toFixed(1)}s</td></tr>`).join('')}
+    </tbody></table>`;
+}
+
+// ========== EVOLVE ==========
+
+async function startEvolve() {
+  const skill = document.getElementById('evolve-skill').value;
+  if (!skill) return alert('请选择 Skill');
+
+  const tcName = document.getElementById('evolve-tc-select').value;
+  let testCasesFile = null;
+  if (tcName) {
+    testCasesFile = 'results/' + skill + '/test_cases/' + tcName + '.json';
+  }
+
+  const req = {
+    skill,
+    spec: document.getElementById('evolve-spec').value || null,
+    max_iterations: parseInt(document.getElementById('evolve-iterations').value),
+    patience: parseInt(document.getElementById('evolve-patience').value),
+    mode: document.getElementById('evolve-mode').value,
+    speed: parseFloat(document.getElementById('evolve-speed').value),
+    threshold: parseFloat(document.getElementById('evolve-threshold').value),
+    trials: parseInt(document.getElementById('evolve-trials').value),
+    parallel: 1,
+    ignore_cache: document.getElementById('evolve-ignore-cache').checked,
+    debug: document.getElementById('evolve-debug').checked,
+    save_trace: document.getElementById('evolve-save-trace').checked,
+    test_cases_file: testCasesFile,
+  };
+
+  const resp = await fetch('/api/evolve', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(req),
+  }).then(r => r.json());
+
+  if (resp.error) return alert(resp.error);
+
+  const taskId = resp.task_id;
+  const card = createTaskCard('panel-evolve', taskId, '演化: ' + skill);
+
+  // 添加 live table
+  const tableArea = document.getElementById('live-table-area-' + taskId);
+  tableArea.innerHTML = `<table class="result-table" id="live-table-${taskId}" style="display:none">
+    <thead><tr><th>轮次</th><th>策略</th><th>Base</th><th>Evolved</th><th>提升</th><th>结果</th></tr></thead>
+    <tbody></tbody></table>`;
+
+  addRunningTask(taskId);
+
+  connectSSE(
+    `/api/evolve/${taskId}/progress`, taskId,
+    (data) => {
+      if (data.type === 'status') {
+        appendLog(taskId, data.message, 'info');
+      } else if (data.type === 'iteration') {
+        const d = data.data;
+        const table = document.getElementById('live-table-' + taskId);
+        table.style.display = 'table';
+        const tbody = table.querySelector('tbody');
+        const row = document.createElement('tr');
+        const accepted = d.accepted;
+        const skipReason = d.skip_reason || '';
+        let badge = '';
+        if (skipReason) {
+          badge = `<span class="badge" style="background:#f5f5f5;color:#888">SKIP</span>`;
+        } else {
+          badge = `<span class="badge ${accepted ? 'badge-accepted' : 'badge-rejected'}">${accepted ? 'ACCEPTED' : 'REJECTED'}</span>`;
+        }
+        row.innerHTML = `<td>${d.iteration}</td>
+          <td>${(d.strategy || '').substring(0, 30)}</td>
+          <td>${(d.base_rate || 0).toFixed(4)}</td>
+          <td>${(d.evolved_rate || 0).toFixed(4)}</td>
+          <td>${(d.improvement || 0) >= 0 ? '+' : ''}${(d.improvement || 0).toFixed(4)}</td>
+          <td>${badge}</td>`;
+        tbody.appendChild(row);
+        appendLog(taskId, `轮次 ${d.iteration}: ${d.strategy || ''} — ${(d.evolved_rate||0).toFixed(4)} (${(d.improvement||0) >= 0 ? '+' : ''}${(d.improvement||0).toFixed(4)}) ${skipReason || (accepted ? '✓' : '✗')}`, accepted ? 'success' : (skipReason ? '' : 'info'));
+      }
+    },
+    (data) => {
+      if (data.status === 'completed') {
+        appendLog(taskId, '演化完成!', 'success');
+        showEvolveResult(taskId, data.result);
+      } else {
+        appendLog(taskId, '演化失败: ' + (data.error || ''), 'error');
+      }
+    }
+  );
+}
+
+function showEvolveResult(taskId, result) {
+  if (!result) return;
+  const improvement = result.improvement || 0;
+  const area = document.getElementById('result-area-' + taskId);
+  area.innerHTML = `
+    <div class="summary-box">
+      <div class="metric"><div class="label">Baseline</div><div class="value">${(result.baseline_rate || 0).toFixed(4)}</div></div>
+      <div class="metric"><div class="label">Evolved</div><div class="value">${(result.evolved_rate || 0).toFixed(4)}</div></div>
+      <div class="metric"><div class="label">提升</div><div class="value" style="color:${improvement >= 0 ? '#2e7d32' : '#c62828'}">${improvement >= 0 ? '+' : ''}${improvement.toFixed(4)}</div></div>
+      <div class="metric"><div class="label">轮次</div><div class="value">${result.iterations_done || 0}</div></div>
+      <div class="metric"><div class="label">接受轮次</div><div class="value">${result.accepted_iterations || 0}</div></div>
+      <div class="metric"><div class="label">最优版本</div><div class="value">${result.best_iter > 0 ? 'iter-' + result.best_iter : 'baseline'}</div></div>
+    </div>`;
+}
+</script>
+</body>
+</html>

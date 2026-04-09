@@ -7,6 +7,7 @@ import argparse
 from .create.cli import add_parser as add_create
 from .eval.cli import add_parser as add_eval
 from .evolve.cli import add_parser as add_evolve
+from .serve.cli import add_parser as add_serve
 
 
 def main() -> None:
@@ -19,6 +20,7 @@ def main() -> None:
     add_create(subparsers)
     add_eval(subparsers)
     add_evolve(subparsers)
+    add_serve(subparsers)
 
     args = parser.parse_args()
     if not args.command:
