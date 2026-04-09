@@ -131,6 +131,25 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 .diff-viewer .diff-hunk { color: #1565c0; background: #e3f2fd; }
 .diff-viewer .diff-add { color: #2e7d32; background: #e8f5e9; }
 .diff-viewer .diff-del { color: #c62828; background: #ffebee; }
+
+/* Guide page */
+.guide-card h3 span:first-child { font-size: 15px; }
+.guide-section { margin-bottom: 20px; }
+.guide-section:last-child { margin-bottom: 0; }
+.guide-section h4 { font-size: 14px; font-weight: 600; color: #1a1a1a; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #f0f0f0; }
+.guide-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.guide-table th { text-align: left; padding: 8px 10px; background: #f8f9fa; border-bottom: 2px solid #e0e0e0; color: #555; font-weight: 600; font-size: 12px; }
+.guide-table td { padding: 8px 10px; border-bottom: 1px solid #eee; color: #444; line-height: 1.6; vertical-align: top; }
+.guide-table code { background: #f0f4f8; padding: 1px 5px; border-radius: 3px; font-size: 12px; color: #1976d2; }
+.guide-list { padding-left: 20px; font-size: 13px; line-height: 1.8; color: #444; }
+.guide-list li { margin-bottom: 4px; }
+.guide-list code { background: #f0f4f8; padding: 1px 5px; border-radius: 3px; font-size: 12px; color: #1976d2; }
+.guide-p { font-size: 13px; color: #444; line-height: 1.6; margin-bottom: 8px; }
+.guide-flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+.guide-flow-step { background: #f0f4f8; padding: 6px 14px; border-radius: 4px; font-size: 13px; color: #333; font-weight: 500; white-space: nowrap; }
+.guide-flow-arrow { color: #999; font-size: 16px; }
+.guide-tip { background: #fff8e1; border-left: 3px solid #ffb300; padding: 10px 14px; border-radius: 0 4px 4px 0; font-size: 13px; color: #5d4037; line-height: 1.6; margin-top: 12px; }
+.guide-tip code { background: #f5f0e0; padding: 1px 5px; border-radius: 3px; font-size: 12px; color: #795548; }
 </style>
 </head>
 <body>
@@ -146,6 +165,7 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
   <div class="tab active" data-tab="create">Create</div>
   <div class="tab" data-tab="eval">Eval</div>
   <div class="tab" data-tab="evolve">Evolve</div>
+  <div class="tab" data-tab="guide">指南</div>
 </div>
 
 <div class="content">
@@ -363,6 +383,271 @@ reference: []</textarea>
         <label><input type="checkbox" id="evolve-debug"> Debug 模式</label>
       </div>
       <button class="btn btn-primary" id="evolve-btn" onclick="startEvolve()">开始演化</button>
+    </div>
+  </div>
+
+  <!-- Guide Tab -->
+  <div class="tab-panel" id="panel-guide">
+    <div class="card guide-card">
+      <h3 class="collapsible-header" onclick="toggleCollapse(this)">
+        <span>快速开始</span>
+        <span class="collapse-arrow open">&#9662;</span>
+      </h3>
+      <div class="collapsible-body">
+        <div class="guide-section">
+          <h4>核心流程</h4>
+          <div class="guide-flow">
+            <span class="guide-flow-step">创建/上传技能</span>
+            <span class="guide-flow-arrow">&rarr;</span>
+            <span class="guide-flow-step">评估得分</span>
+            <span class="guide-flow-arrow">&rarr;</span>
+            <span class="guide-flow-step">演化优化</span>
+            <span class="guide-flow-arrow">&rarr;</span>
+            <span class="guide-flow-step">应用最佳版本</span>
+          </div>
+        </div>
+        <div class="guide-section">
+          <h4>Spec YAML 字段说明</h4>
+          <table class="guide-table">
+            <thead><tr><th style="width:140px">字段</th><th style="width:50px">必填</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>description</code></td><td>是</td><td>技能的一句话功能描述，决定了技能的行为边界</td></tr>
+              <tr><td><code>scene</code></td><td>是</td><td>适用场景列表，支持多个场景，影响测试用例的覆盖范围</td></tr>
+              <tr><td><code>input_output.input</code></td><td>是</td><td>用户输入的格式描述</td></tr>
+              <tr><td><code>input_output.output</code></td><td>是</td><td>期望输出的格式描述</td></tr>
+              <tr><td><code>rule</code></td><td>否</td><td>技能必须遵守的行为规则列表。规则越清晰，技能表现越稳定</td></tr>
+              <tr><td><code>example</code></td><td>否</td><td>输入输出示例，帮助模型理解预期行为</td></tr>
+              <tr><td><code>reference</code></td><td>否</td><td>外部参考文档路径。大段参考资料建议拆到独立文件</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="guide-section">
+          <h4>创建方式</h4>
+          <ul class="guide-list">
+            <li><strong>YAML 编辑器</strong>：在 Create 页面填写 Spec 并创建，适合从零开始</li>
+            <li><strong>上传 ZIP</strong>：上传已有的技能目录（ZIP 包），必须包含 <code>SKILL.md</code> 文件</li>
+          </ul>
+        </div>
+        <div class="guide-tip">
+          Spec 的质量直接影响生成技能的质量。建议 <code>rule</code> 和 <code>example</code> 尽可能具体，模糊的描述会导致技能行为不确定。
+        </div>
+      </div>
+    </div>
+
+    <div class="card guide-card">
+      <h3 class="collapsible-header" onclick="toggleCollapse(this)">
+        <span>评估技能 (Eval)</span>
+        <span class="collapse-arrow">&#9662;</span>
+      </h3>
+      <div class="collapsible-body" style="display:none">
+        <div class="guide-section">
+          <h4>操作步骤</h4>
+          <ol class="guide-list">
+            <li>从下拉框选择要评估的技能</li>
+            <li>可选：选择一个 Spec 作为评估参照（不选则使用技能自带信息）</li>
+            <li>生成或编辑测试用例</li>
+            <li>设置参数后点击「运行评估」</li>
+          </ol>
+        </div>
+        <div class="guide-section">
+          <h4>参数说明</h4>
+          <table class="guide-table">
+            <thead><tr><th style="width:100px">参数</th><th style="width:60px">默认值</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code>trials</code></td><td>5</td>
+                <td>每个测试用例的运行次数。次数越多结果越稳定，但消耗的 API 调用量和时间也线性增加。<br>建议：快速验证用 3 次，正式评估用 5 次</td>
+              </tr>
+              <tr>
+                <td><code>parallel</code></td><td>1</td>
+                <td>并行执行数。增大可加速评估，但同时会增加 API 并发压力。若 API 有速率限制请谨慎调高</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="guide-section">
+          <h4>测试用例</h4>
+          <ul class="guide-list">
+            <li>系统根据 Spec 和技能内容自动生成测试用例</li>
+            <li>生成后可在界面上查看、编辑，再启动评估</li>
+            <li>也可选择已保存的测试用例，或手动上传自定义用例文件</li>
+          </ul>
+        </div>
+        <div class="guide-section">
+          <h4>评分维度</h4>
+          <p class="guide-p">每项独立评分，综合判定是否通过。单条用例满分 1.0，&ge; 0.8 为通过。</p>
+          <table class="guide-table">
+            <thead><tr><th style="width:100px">维度</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>相关性</td><td>回答是否切题，有无答非所问</td></tr>
+              <tr><td>准确性</td><td>事实是否正确，有无 AI 幻觉</td></tr>
+              <tr><td>完整性</td><td>是否覆盖关键信息，有无遗漏</td></tr>
+              <tr><td>逻辑性</td><td>内容结构是否清晰，有无逻辑混乱</td></tr>
+              <tr><td>语言质量</td><td>表述是否自然得体</td></tr>
+              <tr><td>意图预判</td><td>是否擅自预判用户意图、添加未要求的内容</td></tr>
+              <tr><td>风险合规</td><td>是否包含不当或有风险的内容</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="guide-tip">
+          首次评估建议先观察各维度的得分分布，找到短板后再针对性优化，而不是直接进入演化。
+        </div>
+      </div>
+    </div>
+
+    <div class="card guide-card">
+      <h3 class="collapsible-header" onclick="toggleCollapse(this)">
+        <span>演化优化 (Evolve)</span>
+        <span class="collapse-arrow">&#9662;</span>
+      </h3>
+      <div class="collapsible-body" style="display:none">
+        <div class="guide-section">
+          <h4>演化流程</h4>
+          <p class="guide-p">每轮演化自动执行以下步骤：</p>
+          <div class="guide-flow">
+            <span class="guide-flow-step">审视当前技能</span>
+            <span class="guide-flow-arrow">&rarr;</span>
+            <span class="guide-flow-step">识别问题并改进</span>
+            <span class="guide-flow-arrow">&rarr;</span>
+            <span class="guide-flow-step">用测试用例评估</span>
+            <span class="guide-flow-arrow">&rarr;</span>
+            <span class="guide-flow-step">对比提升幅度</span>
+            <span class="guide-flow-arrow">&rarr;</span>
+            <span class="guide-flow-step">决定采纳或拒绝</span>
+          </div>
+          <p class="guide-p">被拒绝的改进会被丢弃，技能回退到上一版本；被采纳的改进成为新的最优版本。</p>
+        </div>
+        <div class="guide-section">
+          <h4>参数说明</h4>
+          <table class="guide-table">
+            <thead><tr><th style="width:100px">参数</th><th style="width:60px">默认值</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code>threshold</code></td><td>0.01</td>
+                <td>每轮最低提升幅度。提升低于此值的改进会被拒绝，用于过滤偶然波动。<br>设得过高会导致大部分改进被拒绝，演化停滞；设得过低会接受无意义的微小波动。<br>建议：0.01 ~ 0.03</td>
+              </tr>
+              <tr>
+                <td><code>speed</code></td><td>0.3</td>
+                <td>演化激进程度，控制每轮改动的幅度大小。详见下方档位说明</td>
+              </tr>
+              <tr>
+                <td><code>mode</code></td><td>steady</td>
+                <td>演化模式。详见下方模式说明</td>
+              </tr>
+              <tr>
+                <td><code>iterations</code></td><td>100</td>
+                <td>最大演化轮数。达到上限后停止，无论是否还有改进空间。<br>每轮都会消耗 API 调用，轮数越多总耗时越长</td>
+              </tr>
+              <tr>
+                <td><code>patience</code></td><td>10</td>
+                <td>连续多少轮无提升后停止。用于避免在进入瓶颈后继续无效演化。<br>如果预期技能还有较大改进空间，可适当调高</td>
+              </tr>
+              <tr>
+                <td><code>trials</code></td><td>5</td>
+                <td>每个测试用例的运行次数。与评估中的 trials 含义相同，越高越稳定但耗时越长</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="guide-section">
+          <h4>Speed 档位说明</h4>
+          <table class="guide-table">
+            <thead><tr><th style="width:80px">档位</th><th style="width:80px">范围</th><th>行为</th></tr></thead>
+            <tbody>
+              <tr><td>保守</td><td>&le; 0.3</td><td>每轮只修复明确的单个问题，改动最小。适合微调已有技能</td></tr>
+              <tr><td>均衡</td><td>0.3 ~ 0.6</td><td>允许局部调整和补充。适合技能结构基本正确但需要完善细节的场景</td></tr>
+              <tr><td>激进</td><td>&gt; 0.6</td><td>允许重组流程、重写段落。适合技能质量较差需要大改的场景</td></tr>
+            </tbody>
+          </table>
+          <div class="guide-tip">
+            speed 越高单轮改动越大，但不等于效果越好。大幅改动可能导致回退，反而降低通过率。建议从保守模式开始，确认演化方向正确后再逐步提高。
+          </div>
+        </div>
+        <div class="guide-section">
+          <h4>演化模式</h4>
+          <table class="guide-table">
+            <thead><tr><th style="width:80px">模式</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><code>steady</code></td><td>每轮都从基线版本出发，改动更可控，适合探索不同优化方向</td></tr>
+              <tr><td><code>greedy</code></td><td>每轮从当前最优版本出发，收敛更快，但可能走入局部最优</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="guide-section">
+          <h4>结果表格解读</h4>
+          <table class="guide-table">
+            <thead><tr><th style="width:100px">列</th><th>含义</th></tr></thead>
+            <tbody>
+              <tr><td>当前最优</td><td>截至本轮的最佳通过率</td></tr>
+              <tr><td>本轮得分</td><td>本轮演化后技能的通过率</td></tr>
+              <tr><td>提升幅度</td><td>本轮相比当前最优的提升值（负数表示回退）</td></tr>
+              <tr><td><span class="badge badge-accepted">ACCEPTED</span></td><td>提升幅度 &ge; threshold，已采纳为新的最优</td></tr>
+              <tr><td><span class="badge badge-rejected">REJECTED</span></td><td>提升幅度 &lt; threshold，已拒绝，技能回退</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="guide-section">
+          <h4>版本管理</h4>
+          <ul class="guide-list">
+            <li><strong>查看 Diff</strong>：选择任意两个版本，查看具体改动内容</li>
+            <li><strong>下载 ZIP</strong>：将指定版本导出为 ZIP 文件</li>
+            <li><strong>应用版本</strong>：将指定版本替换当前技能目录（会自动备份当前版本，可恢复）</li>
+          </ul>
+          <div class="guide-tip">
+            应用版本前建议先用 Diff 确认改动内容，避免引入不符合预期的变更。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card guide-card">
+      <h3 class="collapsible-header" onclick="toggleCollapse(this)">
+        <span>常见问题</span>
+        <span class="collapse-arrow">&#9662;</span>
+      </h3>
+      <div class="collapsible-body" style="display:none">
+        <div class="guide-section">
+          <h4>评估通过率很低，怎么办？</h4>
+          <ul class="guide-list">
+            <li>查看各维度得分，找到得分最低的维度作为突破口</li>
+            <li>检查 Spec 中的 <code>rule</code> 和 <code>example</code> 是否足够具体</li>
+            <li>如果是语言质量问题，考虑调整 Spec 中的表述风格要求</li>
+          </ul>
+        </div>
+        <div class="guide-section">
+          <h4>演化一直被 REJECTED，可能的原因？</h4>
+          <ul class="guide-list">
+            <li><code>threshold</code> 设置过高 &mdash; 尝试降低到 0.01</li>
+            <li><code>speed</code> 过高导致改动过大产生回退 &mdash; 降低到 0.2 再试</li>
+            <li>技能可能已接近最优 &mdash; 尝试增加测试用例覆盖更多场景</li>
+            <li><code>patience</code> 用尽但仍在改进 &mdash; 适当调高 patience</li>
+          </ul>
+        </div>
+        <div class="guide-section">
+          <h4>如何锁定测试用例？</h4>
+          <ul class="guide-list">
+            <li>首次评估生成测试用例后，点击「保存」可保存当前用例</li>
+            <li>后续评估和演化可选择已保存的测试用例，避免重新生成</li>
+            <li>如需重新生成，勾选「忽略缓存」选项</li>
+          </ul>
+        </div>
+        <div class="guide-section">
+          <h4>speed 应该设多少？</h4>
+          <ul class="guide-list">
+            <li>不确定时用默认值 0.3（保守模式）</li>
+            <li>技能刚创建、质量较差时可以尝试 0.5</li>
+            <li>技能已打磨到较高水平时，降低到 0.2 做精细调整</li>
+          </ul>
+        </div>
+        <div class="guide-section">
+          <h4>评估和演化消耗多少 API 调用？</h4>
+          <ul class="guide-list">
+            <li><strong>单次评估</strong> &asymp; 测试用例数 &times; trials 次调用（评估）+ 1 次调用（生成用例，仅首次）</li>
+            <li><strong>单轮演化</strong> &asymp; 1 次调用（审视）+ 评估调用量 + 可能的反思改写调用</li>
+            <li><strong>总调用量</strong> &asymp; 单轮调用量 &times; iterations 轮数</li>
+          </ul>
+        </div>
+      </div>
     </div>
   </div>
 
