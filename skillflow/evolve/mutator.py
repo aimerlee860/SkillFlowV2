@@ -70,6 +70,10 @@ def _read_skill_files(skill_path: Path) -> str:
 def _parse_audit_output(text: str) -> tuple[str, dict[str, str]]:
     """解析审视输出，分离分析文本和修改后的文件。
 
+    支持两种格式：
+    1. SEARCH/REPLACE 块格式（推荐）：只输出被替换的片段
+    2. 完整文件格式（兼容旧版）：输出完整文件内容
+
     Returns:
         (analysis_text, {relative_path: new_content})
     """
@@ -83,11 +87,42 @@ def _parse_audit_output(text: str) -> tuple[str, dict[str, str]]:
     analysis = text[:first_marker_pos].strip()
 
     modified_files = {}
-    for file_path, content in matches:
-        content = _clean_markdown_wrapping(content)
-        modified_files[file_path.strip()] = content
+    for file_path, block in matches:
+        block = _clean_markdown_wrapping(block)
+        rel_path = file_path.strip()
+
+        # 检测是否为 SEARCH/REPLACE 格式
+        sr_pattern = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
+        sr_matches = re.findall(sr_pattern, block, re.DOTALL)
+
+        if sr_matches:
+            # SEARCH/REPLACE 模式：对原文做定点替换
+            full_text = modified_files.get(rel_path, "")  # 支持同一文件多次出现
+            if not full_text:
+                # 第一次遇到该文件，从磁盘读取
+                from . import _read_skill_files  # noqa: avoid circular
+                # 尝试从已有的文件内容推断（这里直接用空串，后面处理）
+                pass
+
+            # 如果该文件还没有内容，跳过（后续由 apply_search_replace 处理）
+            if rel_path in modified_files:
+                modified_files[rel_path] = _apply_search_replace(modified_files[rel_path], sr_matches)
+            else:
+                modified_files[rel_path] = block  # 暂存，后续在 audit_skill 中处理
+        else:
+            # 完整文件模式（兼容旧版）
+            modified_files[rel_path] = block
 
     return analysis, modified_files
+
+
+def _apply_search_replace(original: str, sr_pairs: list[tuple[str, str]]) -> str:
+    """对原始内容应用 SEARCH/REPLACE 替换。"""
+    result = original
+    for search_str, replace_str in sr_pairs:
+        if search_str in result:
+            result = result.replace(search_str, replace_str, 1)
+    return result
 
 
 # ---------- 审视分支 ----------
@@ -129,6 +164,14 @@ def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str 
     for rel_path, content in modified_files.items():
         file_path = skill_path / rel_path
         file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 检查是否为未处理的 SEARCH/REPLACE 块
+        sr_pattern = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
+        sr_matches = re.findall(sr_pattern, content, re.DOTALL)
+        if sr_matches and file_path.exists():
+            original = load_text(file_path)
+            content = _apply_search_replace(original, sr_matches)
+
         save_text(file_path, content)
 
     n = len(modified_files)
