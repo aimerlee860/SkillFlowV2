@@ -109,6 +109,28 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 .chart-label { position: absolute; bottom: -18px; font-size: 10px; color: #888; width: 20px; text-align: center; }
 .chart-y-axis { position: absolute; left: 0; width: 100%; border-top: 1px dashed #ddd; }
 .chart-y-label { position: absolute; left: -30px; font-size: 10px; color: #888; transform: translateY(-50%); }
+
+/* Upload drop zone */
+.upload-drop-zone { border: 2px dashed #ccc; border-radius: 8px; padding: 32px 16px; text-align: center; cursor: pointer; transition: all 0.2s; position: relative; }
+.upload-drop-zone:hover { border-color: #1976d2; background: #f5f9ff; }
+.upload-drop-zone.dragover { border-color: #1976d2; background: #e3f2fd; }
+.upload-drop-zone .upload-hint { color: #888; font-size: 13px; }
+.upload-drop-zone.has-file { border-color: #4caf50; background: #f1f8f1; }
+.upload-result { margin-top: 8px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+.upload-result.success { background: #e8f5e9; color: #2e7d32; }
+.upload-result.error { background: #ffebee; color: #c62828; }
+
+/* Collapsible card */
+.collapsible-header { cursor: pointer; user-select: none; display: flex; justify-content: space-between; align-items: center; }
+.collapsible-header .collapse-arrow { font-size: 12px; color: #999; transition: transform 0.2s; }
+.collapsible-header .collapse-arrow.open { transform: rotate(180deg); }
+
+/* Diff viewer */
+.diff-viewer { font-family: "SF Mono", Monaco, monospace; font-size: 12px; background: #fafafa; border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px; max-height: 500px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.diff-viewer .diff-header { color: #999; }
+.diff-viewer .diff-hunk { color: #1565c0; background: #e3f2fd; }
+.diff-viewer .diff-add { color: #2e7d32; background: #e8f5e9; }
+.diff-viewer .diff-del { color: #c62828; background: #ffebee; }
 </style>
 </head>
 <body>
@@ -130,6 +152,27 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 
   <!-- Create Tab -->
   <div class="tab-panel active" id="panel-create">
+    <div class="card collapsible-card">
+      <h3 class="collapsible-header" onclick="toggleCollapse(this)">Upload Skill <span class="collapse-arrow">&#9662;</span></h3>
+      <div class="collapsible-body" style="display:none">
+        <div id="upload-drop-zone" class="upload-drop-zone"
+             ondragover="event.preventDefault(); this.classList.add('dragover')"
+             ondragleave="this.classList.remove('dragover')"
+             ondrop="handleUploadDrop(event)">
+          <div class="upload-hint">
+            <div style="font-size:28px;margin-bottom:8px">&#128194;</div>
+            <div>拖拽 .zip 文件到此处，或点击选择文件</div>
+            <div style="font-size:11px;color:#aaa;margin-top:4px">zip 内需包含 SKILL.md 文件</div>
+          </div>
+          <input type="file" id="upload-skill-file" accept=".zip" style="display:none" onchange="onUploadFileSelected(this)">
+        </div>
+        <div class="form-row" style="margin-top:12px">
+          <label>技能名称</label>
+          <input type="text" id="upload-skill-name" placeholder="留空则自动从 SKILL.md 或目录名提取">
+        </div>
+        <button class="btn btn-primary" id="upload-btn" onclick="startUploadSkill()">上传技能</button>
+      </div>
+    </div>
     <div class="card">
       <h3>Create Skill</h3>
       <div class="spec-row">
@@ -614,6 +657,105 @@ function appendLog(taskId, message, cls = '') {
 
 // ========== CREATE ==========
 
+// --- Collapsible card ---
+function toggleCollapse(header) {
+  const body = header.nextElementSibling;
+  const arrow = header.querySelector('.collapse-arrow');
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    arrow.classList.add('open');
+  } else {
+    body.style.display = 'none';
+    arrow.classList.remove('open');
+  }
+}
+
+// --- Upload Skill ---
+function handleUploadDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    document.getElementById('upload-skill-file').files = e.dataTransfer.files;
+    showUploadFileName(file);
+  }
+}
+
+// 点击 drop zone 触发文件选择
+document.addEventListener('DOMContentLoaded', () => {
+  const zone = document.getElementById('upload-drop-zone');
+  if (zone) {
+    zone.addEventListener('click', (e) => {
+      if (e.target.tagName !== 'INPUT') {
+        document.getElementById('upload-skill-file').click();
+      }
+    });
+  }
+});
+
+function onUploadFileSelected(input) {
+  const file = input.files[0];
+  if (file) showUploadFileName(file);
+}
+
+function showUploadFileName(file) {
+  const zone = document.getElementById('upload-drop-zone');
+  zone.classList.add('has-file');
+  zone.querySelector('.upload-hint').innerHTML =
+    '<div style="font-size:14px">&#128196; ' + file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)</div>' +
+    '<div style="font-size:11px;color:#aaa;margin-top:4px">点击可重新选择</div>';
+}
+
+async function startUploadSkill() {
+  const fileInput = document.getElementById('upload-skill-file');
+  const file = fileInput.files[0];
+  if (!file) return alert('请先选择 .zip 文件');
+
+  const btn = document.getElementById('upload-btn');
+  btn.disabled = true;
+  btn.textContent = '上传中...';
+
+  const name = document.getElementById('upload-skill-name').value.trim();
+  const formData = new FormData();
+  formData.append('file', file);
+  if (name) formData.append('name', name);
+
+  try {
+    const resp = await fetch('/api/upload-skill', { method: 'POST', body: formData }).then(r => r.json());
+    // 移除旧的结果提示
+    const old = document.querySelector('.upload-result');
+    if (old) old.remove();
+
+    const resultEl = document.createElement('div');
+    if (resp.error) {
+      resultEl.className = 'upload-result error';
+      resultEl.textContent = resp.error;
+    } else {
+      resultEl.className = 'upload-result success';
+      resultEl.textContent = '技能「' + resp.name + '」上传成功！包含 ' + (resp.files || []).length + ' 个文件';
+      // 刷新 skills 列表
+      const skills = await fetch('/api/skills').then(r => r.json());
+      fillSelect('eval-skill', skills);
+      fillSelect('evolve-skill', skills);
+      // 重置上传区域
+      fileInput.value = '';
+      document.getElementById('upload-skill-name').value = '';
+      const zone = document.getElementById('upload-drop-zone');
+      zone.classList.remove('has-file');
+      zone.querySelector('.upload-hint').innerHTML =
+        '<div style="font-size:28px;margin-bottom:8px">&#128194;</div>' +
+        '<div>拖拽 .zip 文件到此处，或点击选择文件</div>' +
+        '<div style="font-size:11px;color:#aaa;margin-top:4px">zip 内需包含 SKILL.md 文件</div>';
+    }
+    btn.parentElement.insertBefore(resultEl, btn.nextSibling);
+  } catch (e) {
+    alert('上传失败: ' + e.message);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '上传技能';
+}
+
 // 选择已有 spec 时加载内容到编辑区
 async function onCreateSpecChange() {
   const sel = document.getElementById('create-spec');
@@ -886,7 +1028,132 @@ function showEvolveResult(taskId, result) {
       <div class="metric"><div class="label">轮次</div><div class="value">${result.iterations_done || 0}</div></div>
       <div class="metric"><div class="label">接受轮次</div><div class="value">${result.accepted_iterations || 0}</div></div>
       <div class="metric"><div class="label">最优版本</div><div class="value">${result.best_iter > 0 ? 'iter-' + result.best_iter : 'baseline'}</div></div>
+    </div>
+    <div class="collapsible-card" style="margin-top:16px;border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px">
+      <h4 class="collapsible-header" onclick="toggleCollapse(this)" style="font-size:14px;margin:0">
+        版本浏览 <span class="collapse-arrow open">&#9662;</span>
+      </h4>
+      <div class="collapsible-body" id="version-browser-${taskId}">
+        <div style="display:flex;gap:12px;margin-top:12px;align-items:center;flex-wrap:wrap">
+          <div style="flex:1;min-width:150px">
+            <label style="font-size:12px;color:#888">对比源</label>
+            <select id="vdiff-from-${taskId}" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:12px"></select>
+          </div>
+          <div style="padding-top:16px;font-size:16px;color:#999">&#8594;</div>
+          <div style="flex:1;min-width:150px">
+            <label style="font-size:12px;color:#888">对比目标</label>
+            <select id="vdiff-to-${taskId}" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:12px"></select>
+          </div>
+          <button class="btn btn-outline" style="margin-top:14px" onclick="loadEvolveDiff('${taskId}')">查看 Diff</button>
+        </div>
+        <div id="vdiff-result-${taskId}" style="margin-top:12px"></div>
+        <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #eee;align-items:center;flex-wrap:wrap">
+          <label style="font-size:12px;color:#888">操作版本</label>
+          <select id="vaction-ver-${taskId}" style="padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:12px"></select>
+          <button class="btn btn-outline" onclick="downloadEvolveVersion('${taskId}')">下载此版本</button>
+          <button class="btn btn-primary" style="font-size:12px" onclick="applyEvolveVersion('${taskId}')">应用此版本</button>
+        </div>
+      </div>
     </div>`;
+
+  // 加载版本列表
+  loadEvolveVersions(taskId, result);
+}
+
+async function loadEvolveVersions(taskId, result) {
+  const skill = document.getElementById('evolve-skill').value;
+  // 从 result 中找 run_id：通过 results API 获取最新的 run
+  const runs = await fetch('/api/results').then(r => r.json());
+  const skillResult = runs.find(r => r.skill === skill);
+  if (!skillResult || !skillResult.evolve_runs.length) return;
+
+  // 用最新的 run
+  const runId = skillResult.evolve_runs[skillResult.evolve_runs.length - 1].id;
+  // 存储供后续使用
+  window['_evolve_' + taskId] = { skill, runId };
+
+  const data = await fetch('/api/evolve-versions/' + encodeURIComponent(skill) + '/' + encodeURIComponent(runId)).then(r => r.json());
+  if (data.error) return;
+
+  const versions = data.versions;
+  const bestId = (versions.find(v => v.best) || versions[0]).id;
+
+  // 填充 select
+  const opts = versions.map(v => {
+    const tag = v.best ? ' [BEST]' : (v.accepted ? ' [OK]' : '');
+    const skip = v.skip_reason ? ' [SKIP]' : '';
+    return `<option value="${v.id}">${v.label} (${(v.rate||0).toFixed(4)})${tag}${skip}</option>`;
+  }).join('');
+
+  const fromSel = document.getElementById('vdiff-from-' + taskId);
+  const toSel = document.getElementById('vdiff-to-' + taskId);
+  const actSel = document.getElementById('vaction-ver-' + taskId);
+  if (fromSel) { fromSel.innerHTML = opts; fromSel.value = 'baseline'; }
+  if (toSel) { toSel.innerHTML = opts; toSel.value = bestId; }
+  if (actSel) { actSel.innerHTML = opts; actSel.value = bestId; }
+
+  // 自动加载一次 diff
+  loadEvolveDiff(taskId);
+}
+
+async function loadEvolveDiff(taskId) {
+  const info = window['_evolve_' + taskId];
+  if (!info) return;
+  const from = document.getElementById('vdiff-from-' + taskId).value;
+  const to = document.getElementById('vdiff-to-' + taskId).value;
+  if (from === to) {
+    document.getElementById('vdiff-result-' + taskId).innerHTML = '<div style="color:#888;font-size:12px">请选择不同的版本</div>';
+    return;
+  }
+
+  const el = document.getElementById('vdiff-result-' + taskId);
+  el.innerHTML = '<div style="color:#888;font-size:12px">加载中...</div>';
+
+  const diff = await fetch('/api/evolve-diff/' + encodeURIComponent(info.skill) + '/' + encodeURIComponent(info.runId) + '?frm=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to)).then(r => r.text());
+
+  if (diff === '(无变化)' || !diff.trim()) {
+    el.innerHTML = '<div style="color:#888;font-size:12px">两个版本无差异</div>';
+    return;
+  }
+
+  // 渲染 unified diff
+  const lines = diff.split('\n');
+  let html = '<div class="diff-viewer">';
+  for (const line of lines) {
+    let cls = '';
+    if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-header';
+    else if (line.startsWith('@@')) cls = 'diff-hunk';
+    else if (line.startsWith('+')) cls = 'diff-add';
+    else if (line.startsWith('-')) cls = 'diff-del';
+    html += `<div class="${cls}">${line.replace(/</g, '&lt;')}</div>`;
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function downloadEvolveVersion(taskId) {
+  const info = window['_evolve_' + taskId];
+  if (!info) return;
+  const version = document.getElementById('vaction-ver-' + taskId).value;
+  window.open('/api/evolve-download/' + encodeURIComponent(info.skill) + '/' + encodeURIComponent(info.runId) + '/' + encodeURIComponent(version));
+}
+
+async function applyEvolveVersion(taskId) {
+  const info = window['_evolve_' + taskId];
+  if (!info) return;
+  const version = document.getElementById('vaction-ver-' + taskId).value;
+  if (!confirm('确定将「' + version + '」版本应用到当前技能？当前技能将被备份。')) return;
+
+  const resp = await fetch('/api/evolve-apply/' + encodeURIComponent(info.skill) + '/' + encodeURIComponent(info.runId) + '/' + encodeURIComponent(version), { method: 'POST' }).then(r => r.json());
+  if (resp.error) {
+    alert('应用失败: ' + resp.error);
+  } else {
+    alert('已应用「' + version + '」版本，备份保存在 ' + resp.backup);
+    // 刷新 skills 列表
+    const skills = await fetch('/api/skills').then(r => r.json());
+    fillSelect('eval-skill', skills);
+    fillSelect('evolve-skill', skills);
+  }
 }
 </script>
 </body>

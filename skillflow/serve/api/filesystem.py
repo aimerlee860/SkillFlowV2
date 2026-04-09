@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import json
+import re
+import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
@@ -266,3 +269,101 @@ async def generate_tc_progress(task_id: str, request: Request):
 
     from sse_starlette.sse import EventSourceResponse
     return EventSourceResponse(_stream())
+
+
+# ===== 技能上传 =====
+
+
+def _parse_frontmatter_name(text: str) -> str | None:
+    """从 SKILL.md 的 YAML frontmatter 中提取 name 字段。"""
+    m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+    if not m:
+        return None
+    for line in m.group(1).splitlines():
+        if line.startswith("name:"):
+            val = line.split(":", 1)[1].strip().strip("\"'")
+            if val:
+                return val
+    return None
+
+
+@router.post("/upload-skill")
+async def upload_skill(
+    file: UploadFile = File(...),
+    name: str = Form(""),
+):
+    """上传 zip 格式的技能目录到 skills/。"""
+    # 1. 校验文件后缀
+    filename = file.filename or ""
+    if not filename.lower().endswith(".zip"):
+        return {"error": "仅支持 .zip 文件"}
+
+    # 2. 读取 zip
+    content = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile:
+        return {"error": "无效的 zip 文件"}
+
+    # 3. 查找 SKILL.md
+    names = zf.namelist()
+    skill_md_candidates = [n for n in names if n.rstrip("/").endswith("/SKILL.md") or n == "SKILL.md"]
+    if not skill_md_candidates:
+        return {"error": "zip 中未找到 SKILL.md 文件"}
+
+    skill_md_path = skill_md_candidates[0]
+
+    # 4. 确定技能名和内部前缀
+    #    如果 SKILL.md 在子目录中（如 my-skill/SKILL.md），前缀为 "my-skill/"
+    #    如果在根目录，前缀为空
+    if "/" in skill_md_path:
+        prefix = skill_md_path.rsplit("SKILL.md", 1)[0]  # e.g. "my-skill/"
+        dir_name = prefix.rstrip("/").split("/")[-1]
+    else:
+        prefix = ""
+        dir_name = ""
+
+    # 提取名称优先级：用户指定 > frontmatter name > 目录名
+    skill_md_text = zf.read(skill_md_path).decode("utf-8")
+    frontmatter_name = _parse_frontmatter_name(skill_md_text)
+
+    skill_name = name.strip() or frontmatter_name or dir_name
+    if not skill_name:
+        return {"error": "无法确定技能名称，请在 zip 中包含顶层目录或手动指定名称"}
+
+    # 5. 名称安全校验
+    if not re.match(r"^[a-zA-Z0-9_\-\u4e00-\u9fff]+$", skill_name):
+        return {"error": f"技能名称不合法: {skill_name}（仅允许字母、数字、下划线、横线、中文）"}
+
+    # 6. 检查冲突
+    target_dir = _CWD / "skills" / skill_name
+    if target_dir.exists():
+        return {"error": f"技能 '{skill_name}' 已存在，请先删除或使用其他名称"}
+
+    # 7. 解压
+    target_dir.mkdir(parents=True, exist_ok=True)
+    extracted_files = []
+    for member in names:
+        # 安全检查：防止路径穿越
+        member_path = (target_dir / member).resolve()
+        if not str(member_path).startswith(str(target_dir.resolve())):
+            continue
+        # 跳过前缀目录
+        if prefix:
+            if not member.startswith(prefix):
+                continue
+            relative = member[len(prefix):]
+        else:
+            relative = member
+        if not relative:
+            continue
+        if member.endswith("/"):
+            (target_dir / relative).mkdir(parents=True, exist_ok=True)
+        else:
+            dest = target_dir / relative
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(zf.read(member))
+            extracted_files.append(relative)
+
+    zf.close()
+    return {"name": skill_name, "files": extracted_files}

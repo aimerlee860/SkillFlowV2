@@ -369,19 +369,20 @@ def evolve_skill(
 def _adaptive_threshold(best_rate: float, min_threshold: float) -> float:
     """根据当前最优 reward 动态调整验收阈值。
 
-    - best_rate < 0.5:  threshold = 0.02（初期容易提升）
-    - 0.5 ~ 0.8:       threshold = 0.03
-    - 0.8 ~ 0.9:       threshold = 0.05（高分段需要确定性）
-    - >= 0.9:          threshold = 0.02（边际递减，放宽避免永远不接受）
+    高分段适当放宽（边际提升困难），低分段直接使用设定阈值。
+    下限不低于设定阈值的一半，避免无限放宽。
+
+    - best_rate < 0.8:  threshold = min_threshold（使用设定值）
+    - 0.8 ~ 0.9:       threshold = min_threshold * 0.75
+    - >= 0.9:          threshold = min_threshold * 0.5
     """
-    if best_rate < 0.5:
-        return max(0.02, min_threshold)
-    elif best_rate < 0.8:
-        return max(0.03, min_threshold)
-    elif best_rate < 0.9:
-        return max(0.05, min_threshold)
+    half = min_threshold / 2
+    if best_rate >= 0.9:
+        return max(half, min_threshold * 0.5)
+    elif best_rate >= 0.8:
+        return max(half, min_threshold * 0.75)
     else:
-        return max(0.02, min_threshold)
+        return min_threshold
 
 
 def _print_baseline_table(baseline_result: dict) -> None:
