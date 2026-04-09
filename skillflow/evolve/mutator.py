@@ -8,7 +8,12 @@ from pathlib import Path
 from rich.console import Console
 
 from ..core.llm import get_llm
-from ..core.prompts import EVOLVE_AUDIT_PROMPT, EVOLVE_REFLECT_PROMPT, EVOLVE_REWRITE_PROMPT
+from ..core.prompts import (
+    EVOLVE_AUDIT_PROMPT,
+    EVOLVE_REFLECT_PROMPT,
+    EVOLVE_REWRITE_PROMPT,
+    build_speed_constraint,
+)
 from ..core.utils import load_text, save_text
 from .exemplar import (
     extract_exemplars,
@@ -87,7 +92,7 @@ def _parse_audit_output(text: str) -> tuple[str, dict[str, str]]:
 
 # ---------- 审视分支 ----------
 
-def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str = "") -> str:
+def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str = "", speed: float = 0.3) -> str:
     """审视技能目录所有文件，基于质量标准输出改进。
 
     读取所有文件 → LLM 审视 → 解析输出 → 就地写回修改的文件。
@@ -96,6 +101,7 @@ def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str 
         skill_path: 技能目录路径
         trace_context: 执行轨迹诊断文本（可选）
         past_strategies: 历史演化策略摘要（可选）
+        speed: 演化速度，控制改动激进程度
 
     Returns:
         审视分析文本
@@ -105,10 +111,12 @@ def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str 
         trace_context = "（无执行轨迹数据）"
     if not past_strategies:
         past_strategies = ""
+    speed_constraint = build_speed_constraint(speed)
     prompt = EVOLVE_AUDIT_PROMPT.format(
         skill_files=files_content,
         trace_context=trace_context,
         past_strategies=past_strategies,
+        speed_constraint=speed_constraint,
     )
 
     console.print("[blue]审视技能中...[/blue]")
@@ -208,6 +216,7 @@ def mutate_skill(
     eval_result: dict | None = None,
     trace_context: str = "",
     past_strategies: str = "",
+    speed: float = 0.3,
 ) -> tuple[str, str, bool]:
     """在技能目录上就地执行审视 + 可选反思 + 可选范例提取。
 
@@ -233,7 +242,7 @@ def mutate_skill(
     skill_before_audit = load_text(skill_path / "SKILL.md") if (skill_path / "SKILL.md").exists() else ""
 
     # 分支 1：审视（必执行）
-    audit_analysis = audit_skill(skill_path, trace_context=trace_context, past_strategies=past_strategies)
+    audit_analysis = audit_skill(skill_path, trace_context=trace_context, past_strategies=past_strategies, speed=speed)
     combined = f"## 审视分析\n{audit_analysis}"
     strategy = "audit"
 

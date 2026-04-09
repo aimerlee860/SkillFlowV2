@@ -49,6 +49,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="输出目录（默认: ./results/<skill目录名>/evolve）",
     )
+    parser.add_argument(
+        "--speed", "-s",
+        type=float,
+        default=0.3,
+        help="演化速度 0.1~1.0，越小改动越保守，越大越激进（默认 0.3）",
+    )
     parser.add_argument("--ignore-cache", action="store_true", help="忽略缓存")
     parser.add_argument("--debug", action="store_true", help="启用 debug 中间件")
     parser.add_argument("--save-trace", action="store_true", help="将执行轨迹落盘到各 iter-*/trace/ 目录")
@@ -79,6 +85,7 @@ def _run(args: argparse.Namespace) -> None:
         max_iterations=args.max_iterations,
         patience=args.patience,
         mode=args.mode,
+        speed=args.speed,
         ignore_cache=args.ignore_cache,
         test_cases_file=args.test_cases,
         debug=args.debug,

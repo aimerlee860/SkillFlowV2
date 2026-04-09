@@ -25,6 +25,35 @@ SPEC_TO_PROMPT_TEMPLATE = """\
 {lang_constraint}
 """
 
+def build_speed_constraint(speed: float) -> str:
+    """根据 speed 值生成演化约束文本。speed 越小改动越保守，越大越激进。"""
+    if speed <= 0.3:
+        return (
+            "\n## 演化速度约束（保守模式）\n"
+            "你只能对技能做最小幅度的精准修改：\n"
+            "- 仅允许修复明确的逻辑缺陷、补充缺失的关键规则\n"
+            "- 禁止重组流程结构、重写段落、新增章节\n"
+            "- 每次最多针对 1~2 个具体问题做定点修复\n"
+            "- 保持原有结构和表述不变，只改有明确问题的部分\n"
+        )
+    elif speed <= 0.6:
+        return (
+            "\n## 演化速度约束（均衡模式）\n"
+            "你可以在保持整体结构的前提下做针对性改进：\n"
+            "- 允许调整局部流程、补充示例、完善规则\n"
+            "- 不允许对技能做结构性重构或全面重写\n"
+            "- 每次改动应集中在少数几个明确的改进点上\n"
+        )
+    else:
+        return (
+            "\n## 演化速度约束（激进模式）\n"
+            "你可以对技能做较大幅度的改进：\n"
+            "- 允许流程重组、规则重写、新增章节\n"
+            "- 可以大幅调整技能的结构和内容\n"
+            "- 确保改动有明确的改进意图，不做无意义的润色\n"
+        )
+
+
 LANG_CONSTRAINT_ZH = "重要：技能中的所有说明文字、规则描述、示例解释必须使用中文撰写。"
 LANG_CONSTRAINT_EN = "Important: All instructions, rule descriptions, and example explanations in the skill must be written in English."
 
@@ -231,6 +260,7 @@ EVOLVE_AUDIT_PROMPT = """\
 - 每个需要修改的文件都要输出完整内容，不要只输出差异
 - 如果所有文件都不需要修改，只输出审视分析即可
 
+{speed_constraint}
 ## 演化约束（必须严格遵守）
 
 1. 禁止无实质意义的改动，包括但不限于：措辞润色、排版调整、注释修改、同义词替换、标点修正。这类改动不会改善评估结果，只会浪费演化轮次。
