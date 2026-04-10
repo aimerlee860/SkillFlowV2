@@ -95,6 +95,7 @@ skillflow evolve skills/my-skill --test-cases results/my-skill/test_cases.json -
 | `-i, --iterations` | 最大演化迭代轮数 | 100 |
 | `-p, --patience` | 连续无提升早停轮数 | 10 |
 | `-M, --mode` | 演化模式：`steady`（每轮从 baseline 出发）或 `greedy`（从当前最优出发） | steady |
+| `-s, --speed` | 演化速度：`low`（保守，1~3 个修改点）、`medium`（均衡，3~6 个）、`high`（激进，不限制） | low |
 | `--save-trace` | 将每轮执行轨迹落盘 | 关闭 |
 | `--test-cases` | 指定测试用例 JSON 文件，跳过生成 | 无 |
 | `--threshold` | 单轮 reward 提升验收阈值 | 0.01 |
@@ -162,12 +163,31 @@ results/<skill-name>/
 
 ### Reward 计算
 
+#### Case Reward
+
+每个测试用例根据 n 次 trial 得分计算 case reward：
+
 ```
-reward = 0.3 × top_score + 0.2 × bottom_score + 0.5 × mean_score × stability_discount
+pass_rate = count(score >= 0.8) / n
+pass@n    = 1 - (1 - pass_rate)^n     # 可达性：至少通过一次的概率
+pass^n    = pass_rate^n               # 可靠性：全部通过的概率
+
+case_reward = 0.5 × mean_score + 0.2 × pass@n + 0.3 × pass^n
 ```
 
-- `stability_discount`：基于 pass@k 稳定性的折扣因子
-- 通过阈值：单 case `pass_rate >= 0.8` 视为通过
+- 通过阈值：`score >= 0.8` 视为通过
+- `n` 为实际 trial 数，非硬编码
+
+#### Overall Reward
+
+所有用例的 reward 汇总为全局分数（归一化综合法）：
+
+```
+overall_reward = 0.8 × mean(case_rewards) + 0.2 × (1 - std(case_rewards))
+```
+
+- 均值权重 0.8：整体质量水平
+- 标准差权重 0.2：各 case 表现稳定性（std 越小越好）
 
 ## 演化机制
 
