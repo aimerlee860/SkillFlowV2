@@ -95,7 +95,7 @@ skillflow evolve skills/my-skill --test-cases results/my-skill/test_cases.json -
 | `-i, --iterations` | 最大演化迭代轮数 | 100 |
 | `-p, --patience` | 连续无提升早停轮数 | 10 |
 | `-M, --mode` | 演化模式：`steady`（每轮从 baseline 出发）或 `greedy`（从当前最优出发） | steady |
-| `-s, --speed` | 演化速度：`low`（保守，1~3 个修改点）、`medium`（均衡，3~6 个）、`high`（激进，不限制） | low |
+| `-s, --speed` | 演化速度：`low`（保守，1 ~ 3 个修改点）、`medium`（均衡，3 ~ 6 个）、`high`（激进，不限制） | low |
 | `--save-trace` | 将每轮执行轨迹落盘 | 关闭 |
 | `--test-cases` | 指定测试用例 JSON 文件，跳过生成 | 无 |
 | `--threshold` | 单轮 reward 提升验收阈值 | 0.01 |
