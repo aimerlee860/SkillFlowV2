@@ -366,8 +366,11 @@ reference: []</textarea>
       </div>
       <div class="form-row">
         <label>Speed</label>
-        <input type="range" id="evolve-speed" min="0.1" max="1.0" step="0.1" value="0.3" oninput="document.getElementById('speed-val').textContent=this.value">
-        <span class="range-value" id="speed-val">0.3</span>
+        <select id="evolve-speed">
+          <option value="low">low（保守）</option>
+          <option value="medium">medium（均衡）</option>
+          <option value="high">high（激进）</option>
+        </select>
       </div>
       <div class="form-row">
         <label>Threshold</label>
@@ -527,8 +530,8 @@ reference: []</textarea>
                 <td>每轮最低提升幅度。提升低于此值的改进会被拒绝，用于过滤偶然波动。<br>设得过高会导致大部分改进被拒绝，演化停滞；设得过低会接受无意义的微小波动。<br>建议：0.01 ~ 0.03</td>
               </tr>
               <tr>
-                <td><code>speed</code></td><td>0.3</td>
-                <td>演化激进程度，控制每轮改动的幅度大小。详见下方档位说明</td>
+                <td><code>speed</code></td><td>low</td>
+                <td>演化激进程度，控制每轮修改点数量和改动范围。low=1~3个修改点，medium=3~6个，high=不限制</td>
               </tr>
               <tr>
                 <td><code>mode</code></td><td>steady</td>
@@ -560,7 +563,7 @@ reference: []</textarea>
             </tbody>
           </table>
           <div class="guide-tip">
-            speed 越高单轮改动越大，但不等于效果越好。大幅改动可能导致回退，反而降低通过率。建议从保守模式开始，确认演化方向正确后再逐步提高。
+            speed 越高单轮改动越大，但不等于效果越好。大幅改动可能导致回退，反而降低通过率。建议从 low 开始，确认演化方向正确后再切到 medium 或 high。
           </div>
         </div>
         <div class="guide-section">
@@ -618,7 +621,7 @@ reference: []</textarea>
           <h4>演化一直被 REJECTED，可能的原因？</h4>
           <ul class="guide-list">
             <li><code>threshold</code> 设置过高 &mdash; 尝试降低到 0.01</li>
-            <li><code>speed</code> 过高导致改动过大产生回退 &mdash; 降低到 0.2 再试</li>
+            <li><code>speed</code> 过高导致改动过大产生回退 &mdash; 切换到 low 再试</li>
             <li>技能可能已接近最优 &mdash; 尝试增加测试用例覆盖更多场景</li>
             <li><code>patience</code> 用尽但仍在改进 &mdash; 适当调高 patience</li>
           </ul>
@@ -634,9 +637,10 @@ reference: []</textarea>
         <div class="guide-section">
           <h4>speed 应该设多少？</h4>
           <ul class="guide-list">
-            <li>不确定时用默认值 0.3（保守模式）</li>
-            <li>技能刚创建、质量较差时可以尝试 0.5</li>
-            <li>技能已打磨到较高水平时，降低到 0.2 做精细调整</li>
+            <li>不确定时用默认值 low（保守模式，1~3 个修改点）</li>
+            <li>技能刚创建、质量较差时可以尝试 medium（3~6 个修改点）</li>
+            <li>需要大幅度重组或改写时使用 high（不限制修改点）</li>
+            <li>技能已打磨到较高水平时，用 low 做精细调整</li>
           </ul>
         </div>
         <div class="guide-section">
@@ -1232,7 +1236,7 @@ async function startEvolve() {
     max_iterations: parseInt(document.getElementById('evolve-iterations').value),
     patience: parseInt(document.getElementById('evolve-patience').value),
     mode: document.getElementById('evolve-mode').value,
-    speed: parseFloat(document.getElementById('evolve-speed').value),
+    speed: document.getElementById('evolve-speed').value,
     threshold: parseFloat(document.getElementById('evolve-threshold').value),
     trials: parseInt(document.getElementById('evolve-trials').value),
     parallel: 1,

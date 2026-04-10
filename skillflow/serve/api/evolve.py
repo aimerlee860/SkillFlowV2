@@ -27,7 +27,7 @@ class EvolveRequest(BaseModel):
     max_iterations: int = 100
     patience: int = 10
     mode: str = "steady"
-    speed: float = 0.3
+    speed: str = "low"
     ignore_cache: bool = False
     debug: bool = False
     save_trace: bool = False

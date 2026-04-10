@@ -39,7 +39,7 @@ def evolve_skill(
     max_iterations: int = 100,
     patience: int = 10,
     mode: str = "steady",
-    speed: float = 0.3,
+    speed: str = "low",
     ignore_cache: bool = False,
     test_cases_file: str | Path | None = None,
     debug: bool = False,
@@ -57,7 +57,7 @@ def evolve_skill(
         max_iterations: 最大演化轮数
         patience: 连续无提升早停轮数
         mode: 演化模式 - steady=从 baseline 演化, greedy=从当前最优演化
-        speed: 演化速度 0.1~1.0，越小改动越保守
+        speed: 演化速度 "low"|"medium"|"high"，控制每轮修改点数量和改动范围
         ignore_cache: 是否忽略缓存
         test_cases_file: 测试用例 JSON 文件路径，提供则跳过生成直接加载
         debug: 是否启用 debug 中间件

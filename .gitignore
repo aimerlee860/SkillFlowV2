@@ -63,3 +63,4 @@ logs/
 
 # Claude local config
 .claude/
+CLAUDE.md

@@ -51,9 +51,9 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument(
         "--speed", "-s",
-        type=float,
-        default=0.3,
-        help="演化速度 0.1~1.0，越小改动越保守，越大越激进（默认 0.3）",
+        choices=["low", "medium", "high"],
+        default="low",
+        help="演化速度：low=保守（1~3个修改点），medium=均衡（3~6个），high=激进（默认 low）",
     )
     parser.add_argument("--ignore-cache", action="store_true", help="忽略缓存")
     parser.add_argument("--debug", action="store_true", help="启用 debug 中间件")

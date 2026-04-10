@@ -127,7 +127,7 @@ def _apply_search_replace(original: str, sr_pairs: list[tuple[str, str]]) -> str
 
 # ---------- 审视分支 ----------
 
-def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str = "", speed: float = 0.3) -> str:
+def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str = "", speed: str = "low") -> str:
     """审视技能目录所有文件，基于质量标准输出改进。
 
     读取所有文件 → LLM 审视 → 解析输出 → 就地写回修改的文件。
@@ -136,7 +136,7 @@ def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str 
         skill_path: 技能目录路径
         trace_context: 执行轨迹诊断文本（可选）
         past_strategies: 历史演化策略摘要（可选）
-        speed: 演化速度，控制改动激进程度
+        speed: 演化速度 "low"|"medium"|"high"，控制改动激进程度
 
     Returns:
         审视分析文本
@@ -259,7 +259,7 @@ def mutate_skill(
     eval_result: dict | None = None,
     trace_context: str = "",
     past_strategies: str = "",
-    speed: float = 0.3,
+    speed: str = "low",
 ) -> tuple[str, str, bool]:
     """在技能目录上就地执行审视 + 可选反思 + 可选范例提取。
 
