@@ -17,33 +17,27 @@ def compute_reward(scores, threshold=0.8):
     """根据多次 trial 得分列表计算 reward。
 
     公式：
-    - top_quality = max(f)  （潜力：最好的一次表现）
-    - bottom_quality = min(f) if 全员达标 else 0  （稳健：最差表现）
-    - mean_quality = mean(scores)  （整体水平）
-    - base_score = 0.3 * top + 0.2 * bottom + 0.5 * mean
-    - reward = base_score * (1 - min(var, 0.25) / 0.25)
+    - n = len(scores)（实际 trial 数）
+    - mean_score = mean(scores)          （整体质量）
+    - pass@n = 1 - (1 - pass_rate)^n     （可达性：至少通过一次的概率）
+    - pass^n = pass_rate^n               （可靠性：全部通过的概率）
+    - reward = 0.5 × mean_score + 0.2 × pass@n + 0.3 × pass^n
     """
     scores = np.array(scores, dtype=float)
-    f = np.where(scores > threshold, scores, 0)
+    n = len(scores)
+    mean_score = float(np.mean(scores))
+    pass_rate = float(np.mean(scores > threshold))
+    p_at_k = 1 - (1 - pass_rate) ** n
+    p_hat_k = pass_rate ** n
 
-    top_quality = float(np.max(f))
-    bottom_quality = float(np.min(f)) if np.all(scores > threshold) else 0.0
-    mean_quality = float(np.mean(scores))
-    var_val = float(np.var(scores))
-
-    stability_discount = 1 - min(var_val, 0.25) / 0.25
-    base_score = 0.3 * top_quality + 0.2 * bottom_quality + 0.5 * mean_quality
-    final_reward = base_score * stability_discount
-
-    return round(final_reward, 4)
+    return round(0.5 * mean_score + 0.2 * p_at_k + 0.3 * p_hat_k, 4)
 
 
-def compute_case_metrics(case_results: list[dict], k: int = 3, threshold: float = 0.8) -> dict:
+def compute_case_metrics(case_results: list[dict], threshold: float = 0.8) -> dict:
     """计算单个测试用例的详细指标。
 
     Args:
         case_results: [{"pass": bool, "score": float, ...}, ...]
-        k: pass@k 中的 k 值
         threshold: 通过阈值
 
     Returns:
@@ -52,11 +46,12 @@ def compute_case_metrics(case_results: list[dict], k: int = 3, threshold: float 
     pass_rate = compute_pass_rate(case_results)
     scores = [r["score"] for r in case_results]
     scores_arr = np.array(scores, dtype=float)
+    n = len(scores)
 
     mean_score = float(np.mean(scores_arr))
     var_score = float(np.var(scores_arr))
-    p_at_k = 1 - (1 - pass_rate) ** k
-    p_hat_k = pass_rate ** k
+    p_at_k = 1 - (1 - pass_rate) ** n
+    p_hat_k = pass_rate ** n
     reward = compute_reward(scores, threshold)
 
     return {
@@ -69,5 +64,14 @@ def compute_case_metrics(case_results: list[dict], k: int = 3, threshold: float 
 
 
 def compute_overall_reward(case_rewards: list[float]) -> float:
-    """根据所有用例的 reward 列表计算全局 reward。"""
-    return compute_reward(case_rewards)
+    """根据所有用例的 reward 列表计算全局 reward。
+
+    归一化综合法：均值权重 0.8，稳定性权重 0.2。
+    overall_reward = 0.8 × mean + 0.2 × (1 - std)
+    """
+    if not case_rewards:
+        return 0.0
+    rewards = np.array(case_rewards, dtype=float)
+    mean_val = float(np.mean(rewards))
+    std_val = float(np.std(rewards))
+    return round(0.8 * mean_val + 0.2 * (1 - std_val), 4)
