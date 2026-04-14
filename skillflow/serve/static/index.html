@@ -162,7 +162,8 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 </div>
 
 <div class="tabs">
-  <div class="tab active" data-tab="create">Create</div>
+  <div class="tab active" data-tab="manage">Manage</div>
+  <div class="tab" data-tab="create">Create</div>
   <div class="tab" data-tab="eval">Eval</div>
   <div class="tab" data-tab="evolve">Evolve</div>
   <div class="tab" data-tab="guide">指南</div>
@@ -170,29 +171,45 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 
 <div class="content">
 
-  <!-- Create Tab -->
-  <div class="tab-panel active" id="panel-create">
-    <div class="card collapsible-card">
-      <h3 class="collapsible-header" onclick="toggleCollapse(this)">Upload Skill <span class="collapse-arrow">&#9662;</span></h3>
-      <div class="collapsible-body" style="display:none">
-        <div id="upload-drop-zone" class="upload-drop-zone"
-             ondragover="event.preventDefault(); this.classList.add('dragover')"
-             ondragleave="this.classList.remove('dragover')"
-             ondrop="handleUploadDrop(event)">
-          <div class="upload-hint">
-            <div style="font-size:28px;margin-bottom:8px">&#128194;</div>
-            <div>拖拽 .zip 文件到此处，或点击选择文件</div>
-            <div style="font-size:11px;color:#aaa;margin-top:4px">zip 内需包含 SKILL.md 文件</div>
-          </div>
-          <input type="file" id="upload-skill-file" accept=".zip" style="display:none" onchange="onUploadFileSelected(this)">
+  <!-- Manage Tab -->
+  <div class="tab-panel active" id="panel-manage">
+    <div class="card">
+      <h3>Upload Skill</h3>
+      <div id="upload-drop-zone" class="upload-drop-zone"
+           ondragover="event.preventDefault(); this.classList.add('dragover')"
+           ondragleave="this.classList.remove('dragover')"
+           ondrop="handleUploadDrop(event)">
+        <div class="upload-hint">
+          <div style="font-size:28px;margin-bottom:8px">&#128194;</div>
+          <div>拖拽 .zip 文件到此处，或点击选择文件</div>
+          <div style="font-size:11px;color:#aaa;margin-top:4px">zip 内需包含 SKILL.md 文件</div>
         </div>
-        <div class="form-row" style="margin-top:12px">
-          <label>技能名称</label>
-          <input type="text" id="upload-skill-name" placeholder="留空则自动从 SKILL.md 或目录名提取">
-        </div>
-        <button class="btn btn-primary" id="upload-btn" onclick="startUploadSkill()">上传技能</button>
+        <input type="file" id="upload-skill-file" accept=".zip" style="display:none" onchange="onUploadFileSelected(this)">
+      </div>
+      <div class="form-row" style="margin-top:12px">
+        <label>技能名称</label>
+        <input type="text" id="upload-skill-name" placeholder="留空则自动从 SKILL.md 或目录名提取">
+      </div>
+      <button class="btn btn-primary" id="upload-btn" onclick="startUploadSkill()">上传技能</button>
+    </div>
+    <div class="card">
+      <h3>Skill Info</h3>
+      <div class="form-row">
+        <label>Skill</label>
+        <select id="manage-skill" onchange="onManageSkillChange()"><option value="">-- 选择 Skill --</option></select>
+      </div>
+      <div id="skill-meta-box" class="content-preview" style="display:none">
+        <pre id="skill-meta-content"></pre>
+      </div>
+      <div id="skill-actions" style="margin-top:12px;display:none">
+        <button class="btn btn-danger" onclick="deleteSkill()">删除</button>
+        <button class="btn btn-outline" onclick="downloadSkill()">下载 ZIP</button>
       </div>
     </div>
+  </div>
+
+  <!-- Create Tab -->
+  <div class="tab-panel" id="panel-create">
     <div class="card">
       <h3>Create Skill</h3>
       <div class="spec-row">
@@ -674,6 +691,7 @@ async function loadOptions() {
     fetch('/api/skills').then(r => r.json()),
     fetch('/api/specs').then(r => r.json()),
   ]);
+  fillSelect('manage-skill', skills);
   fillSelect('eval-skill', skills);
   fillSelect('evolve-skill', skills);
   fillSelect('create-spec', specs);
@@ -701,6 +719,62 @@ function fillSelect(id, items, optional = false) {
 }
 
 loadOptions();
+
+// --- Manage Tab ---
+async function onManageSkillChange() {
+  const skill = document.getElementById('manage-skill').value;
+  const metaBox = document.getElementById('skill-meta-box');
+  const actionsBox = document.getElementById('skill-actions');
+  const metaContent = document.getElementById('skill-meta-content');
+
+  if (!skill) {
+    metaBox.style.display = 'none';
+    actionsBox.style.display = 'none';
+    return;
+  }
+
+  const resp = await fetch('/api/skills/' + encodeURIComponent(skill) + '/meta').then(r => r.json());
+  if (resp.error) {
+    metaContent.textContent = resp.error;
+  } else {
+    metaContent.textContent = 'name: ' + (resp.name || '(未设置)') + '\ndescription: ' + (resp.description || '(未设置)');
+  }
+  metaBox.style.display = 'block';
+  actionsBox.style.display = 'block';
+}
+
+async function deleteSkill() {
+  const skill = document.getElementById('manage-skill').value;
+  if (!skill) return;
+
+  if (!confirm('确定删除技能 "' + skill + '"？此操作不可恢复。')) return;
+
+  const resp = await fetch('/api/skills/' + encodeURIComponent(skill), { method: 'DELETE' }).then(r => r.json());
+  if (resp.error) {
+    alert('删除失败: ' + resp.error);
+    return;
+  }
+
+  alert('技能 "' + skill + '" 已删除');
+  // 刷新列表
+  const skills = await fetch('/api/skills').then(r => r.json());
+  fillSelect('manage-skill', skills);
+  fillSelect('eval-skill', skills);
+  fillSelect('evolve-skill', skills);
+  // 重置显示
+  document.getElementById('skill-meta-box').style.display = 'none';
+  document.getElementById('skill-actions').style.display = 'none';
+}
+
+function downloadSkill() {
+  const skill = document.getElementById('manage-skill').value;
+  if (!skill) return;
+
+  const link = document.createElement('a');
+  link.href = '/api/skills/' + encodeURIComponent(skill) + '/download';
+  link.download = skill + '.zip';
+  link.click();
+}
 
 // --- Test cases management ---
 let _evalTcEdited = false;
@@ -1024,6 +1098,7 @@ async function startUploadSkill() {
       resultEl.textContent = '技能「' + resp.name + '」上传成功！包含 ' + (resp.files || []).length + ' 个文件';
       // 刷新 skills 列表
       const skills = await fetch('/api/skills').then(r => r.json());
+      fillSelect('manage-skill', skills);
       fillSelect('eval-skill', skills);
       fillSelect('evolve-skill', skills);
       // 重置上传区域

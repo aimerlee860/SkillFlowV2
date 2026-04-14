@@ -5,10 +5,13 @@ description = "Skill creation, evaluation and evolution framework based on deepa
 requires-python = ">=3.12"
 dependencies = [
     "deepagents",
-    "langchain-core>=1.2.21",
     "langchain>=1.2.11",
+    "langchain-core>=1.2.21",
+    "langchain-openai>=0.3.0",
+    "langgraph>=0.3.0",
     "python-dotenv",
     "pyyaml",
+    "numpy",
     "rich",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",

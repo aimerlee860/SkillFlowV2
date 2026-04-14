@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
+import shutil
 import zipfile
 from pathlib import Path
+
+import yaml
 
 from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.responses import PlainTextResponse
@@ -367,3 +371,75 @@ async def upload_skill(
 
     zf.close()
     return {"name": skill_name, "files": extracted_files}
+
+
+# ===== 技能管理 =====
+
+
+@router.delete("/skills/{name}")
+def delete_skill(name: str):
+    """删除技能目录。"""
+    skill_dir = _CWD / "skills" / name
+    if not skill_dir.exists():
+        return {"error": f"技能 '{name}' 不存在"}
+    if not skill_dir.is_dir():
+        return {"error": f"'{name}' 不是技能目录"}
+    # 安全检查：确保路径在 skills/ 下
+    skill_dir = skill_dir.resolve()
+    skills_root = (_CWD / "skills").resolve()
+    if not str(skill_dir).startswith(str(skills_root)):
+        return {"error": "invalid path"}
+    import shutil
+    shutil.rmtree(skill_dir)
+    return {"deleted": name}
+
+
+@router.get("/skills/{name}/meta")
+def get_skill_meta(name: str):
+    """获取技能元信息（从 SKILL.md frontmatter 提取 name 和 description）。"""
+    skill_file = _CWD / "skills" / name / "SKILL.md"
+    if not skill_file.exists():
+        return {"error": f"技能 '{name}' 不存在"}
+    content = skill_file.read_text(encoding="utf-8")
+    # 解析 frontmatter
+    m = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+    result = {"name": "", "description": ""}
+    if m:
+        try:
+            fm = yaml.safe_load(m.group(1))
+            if fm:
+                result["name"] = fm.get("name", "")
+                result["description"] = fm.get("description", "")
+        except yaml.YAMLError:
+            pass
+    return result
+
+
+@router.get("/skills/{name}/download")
+def download_skill(name: str):
+    """下载技能 zip 包。"""
+    from fastapi.responses import StreamingResponse
+    skill_dir = _CWD / "skills" / name
+    if not skill_dir.exists() or not skill_dir.is_dir():
+        return {"error": f"技能 '{name}' 不存在"}
+    # 安全检查
+    skill_dir = skill_dir.resolve()
+    skills_root = (_CWD / "skills").resolve()
+    if not str(skill_dir).startswith(str(skills_root)):
+        return {"error": "invalid path"}
+
+    # 创建 zip
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, dirs, files in os.walk(skill_dir):
+            for file in files:
+                file_path = Path(root) / file
+                arc_name = str(file_path.relative_to(skill_dir))
+                zf.write(file_path, arc_name)
+    zip_buffer.seek(0)
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={name}.zip"}
+    )

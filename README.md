@@ -33,7 +33,36 @@ LLM_MODEL_NAME=gpt-4o
 
 ## 使用方法
 
-### 创建 Skill
+### Web UI
+
+启动 Web 服务器：
+
+```bash
+skillflow serve [--host 127.0.0.1] [--port 8765]
+```
+
+Web UI 包含以下页面：
+
+| 页面 | 功能 |
+|------|------|
+| **Manage** | 上传技能（ZIP 包）、查看技能元信息、删除技能、下载技能 |
+| **Create** | 从 YAML Spec 生成新技能 |
+| **Eval** | 选择技能并运行评估，支持测试用例生成/保存 |
+| **Evolve** | 运行多轮演化优化技能 |
+| **指南** | 使用说明和参数文档 |
+
+Manage 页面 API：
+
+| API | 功能 |
+|-----|------|
+| `POST /api/upload-skill` | 上传 ZIP 格式技能包 |
+| `GET /api/skills/{name}/meta` | 获取技能元信息（name、description） |
+| `DELETE /api/skills/{name}` | 删除技能目录 |
+| `GET /api/skills/{name}/download` | 下载技能 ZIP 包 |
+
+### CLI 命令
+
+#### 创建 Skill
 
 通过 YAML 规格文件生成 Skill：
 
