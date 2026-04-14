@@ -90,7 +90,7 @@ def create_skill(
     agent = build_agent(skills=["skill-creator"])
 
     console.print("[blue]生成技能中...[/blue]")
-    response = run_agent(agent, prompt)
+    response, _ = run_agent(agent, prompt)
 
     # 保存结果：创建标准技能目录结构
     ensure_dir(output_dir)
