@@ -6,7 +6,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ..core.agent import build_agent, run_agent
+from ..core.agent import SKILLFLOW_SKILLS_DIR, build_agent, run_agent
 from ..core.prompts import (
     LANG_CONSTRAINT_EN,
     LANG_CONSTRAINT_ZH,
@@ -87,7 +87,8 @@ def create_skill(
     prompt = spec_to_prompt(spec, lang=lang)
 
     console.print(f"[blue]加载 skill-creator 技能，创建 agent...[/blue]")
-    agent = build_agent(skills=["skill-creator"])
+    skills_dir = str(SKILLFLOW_SKILLS_DIR)
+    agent = build_agent(skills=[skills_dir])
 
     console.print("[blue]生成技能中...[/blue]")
     response, _ = run_agent(agent, prompt)

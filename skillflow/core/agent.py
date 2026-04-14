@@ -17,6 +17,9 @@ from .debug_middleware import DebugMiddleware
 from .llm import get_llm
 
 
+SKILLFLOW_SKILLS_DIR = Path.home() / ".skillflow" / "skills"
+
+
 def _setup_debug_logging() -> None:
     """确保 debug logger 配置为 INFO 级别并输出到 stderr。"""
     dbg = logging.getLogger("skillflow.debug")
@@ -40,7 +43,7 @@ def build_agent(
     """构建 deepagent。
 
     Args:
-        skills: 技能路径列表（如 ["skill-creator"] 或 ["./skills/my-skill"]）
+        skills: 技能源目录路径列表（如 ["~/.skillflow/skills/"]）
         system_prompt: 自定义系统提示词
         tools: 额外的工具列表
         model: 自定义模型，默认使用 get_llm()
