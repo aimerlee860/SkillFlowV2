@@ -40,7 +40,7 @@ def start_eval(req: EvalRequest, request: Request):
 
     output_dir = Path.cwd() / "results" / req.skill / "eval" / time.strftime("%Y%m%d%H%M")
 
-    task = tm.create_task("eval")
+    task = tm.create_task("eval", skill=req.skill)
     progress_file = output_dir / "eval_progress.jsonl"
 
     def _run():

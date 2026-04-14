@@ -24,6 +24,7 @@ class TaskStatus(str, Enum):
 class Task:
     id: str
     task_type: str  # "create" | "eval" | "evolve"
+    skill: str | None = None  # 正在操作的技能名
     status: TaskStatus = TaskStatus.PENDING
     progress_events: list[dict] = field(default_factory=list)
     result: dict | None = None
@@ -34,6 +35,7 @@ class Task:
         return {
             "id": self.id,
             "task_type": self.task_type,
+            "skill": self.skill,
             "status": self.status.value,
             "error": self.error,
             "created_at": self.created_at,
@@ -47,11 +49,19 @@ class TaskManager:
         self._tasks: dict[str, Task] = {}
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
-    def create_task(self, task_type: str) -> Task:
+    def create_task(self, task_type: str, skill: str | None = None) -> Task:
         task_id = uuid.uuid4().hex[:8]
-        task = Task(id=task_id, task_type=task_type)
+        task = Task(id=task_id, task_type=task_type, skill=skill)
         self._tasks[task_id] = task
         return task
+
+    def is_skill_in_use(self, skill_name: str) -> bool:
+        """检查技能是否正在被任务使用。"""
+        for task in self._tasks.values():
+            if task.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+                if task.skill == skill_name:
+                    return True
+        return False
 
     def submit(
         self,

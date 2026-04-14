@@ -48,7 +48,7 @@ def start_evolve(req: EvolveRequest, request: Request):
 
     output_dir = Path.cwd() / "results" / req.skill / "evolve"
 
-    task = tm.create_task("evolve")
+    task = tm.create_task("evolve", skill=req.skill)
 
     def _run():
         from ...evolve.orchestrator import evolve_skill

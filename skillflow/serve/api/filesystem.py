@@ -377,8 +377,13 @@ async def upload_skill(
 
 
 @router.delete("/skills/{name}")
-def delete_skill(name: str):
+def delete_skill(name: str, request: Request):
     """删除技能目录。"""
+    # 检查是否正在被任务使用
+    tm = request.app.state.task_manager
+    if tm.is_skill_in_use(name):
+        return {"error": f"技能 '{name}' 正在运行任务中，无法删除"}
+
     skill_dir = _CWD / "skills" / name
     if not skill_dir.exists():
         return {"error": f"技能 '{name}' 不存在"}

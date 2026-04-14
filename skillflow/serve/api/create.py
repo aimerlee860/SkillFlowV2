@@ -44,7 +44,7 @@ def start_create(req: CreateRequest, request: Request):
 
     output_dir = Path.cwd() / "skills" / req.name
 
-    task = tm.create_task("create")
+    task = tm.create_task("create", skill=req.name)
 
     def _run():
         from ...create.creator import create_skill
