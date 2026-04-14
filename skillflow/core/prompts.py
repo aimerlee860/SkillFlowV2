@@ -3,6 +3,9 @@
 SPEC_TO_PROMPT_TEMPLATE = """\
 请根据以下技能规范（SPEC）创建一个完整的技能。
 
+## 技能名称（必须使用）
+{name}
+
 ## 技能描述
 {description}
 
@@ -21,7 +24,14 @@ SPEC_TO_PROMPT_TEMPLATE = """\
 
 {reference_section}
 
-请按照 deepagents 技能格式，生成一个完整的 SKILL.md 文件。包含 YAML frontmatter（name, description）和 markdown body。
+## 输出要求
+
+请使用 skill-creator 技能创建完整的技能目录结构。
+
+**关键约束**：
+1. YAML frontmatter 中的 `name` 字段必须填写 `{name}`（严格使用此名称，不要自行命名）
+2. 创建完成后，报告技能目录的完整路径
+
 {lang_constraint}
 """
 
