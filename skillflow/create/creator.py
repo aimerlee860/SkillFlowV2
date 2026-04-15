@@ -29,12 +29,13 @@ def _get_lang_constraint(lang: str) -> str:
     return ""
 
 
-def spec_to_prompt(spec: SkillSpec, name: str, lang: str = "auto") -> str:
+def spec_to_prompt(spec: SkillSpec, name: str, output_dir: Path, lang: str = "auto") -> str:
     """将 SkillSpec 转换为自然语言 prompt。
 
     Args:
         spec: 技能规范对象
         name: 用户指定的技能名称
+        output_dir: 技能输出目录路径
         lang: 输出语言
     """
     scenes = "\n".join(f"- {s}" for s in spec.scenes)
@@ -58,6 +59,7 @@ def spec_to_prompt(spec: SkillSpec, name: str, lang: str = "auto") -> str:
 
     return SPEC_TO_PROMPT_TEMPLATE.format(
         name=name,
+        output_dir=str(output_dir),
         description=spec.description,
         scenes=scenes,
         input_desc=spec.input_desc,
@@ -69,16 +71,30 @@ def spec_to_prompt(spec: SkillSpec, name: str, lang: str = "auto") -> str:
     )
 
 
-def _find_created_skill_dir(response: str, name: str) -> Path | None:
+def _find_created_skill_dir(response: str, name: str, expected_output_dir: Path) -> Path | None:
     """从响应中解析或搜索 skill-creator 创建的技能目录。
 
     Args:
         response: agent 的响应文本
         name: 期望的技能名称
+        expected_output_dir: 期望的输出目录路径
 
     Returns:
         技能目录路径，找不到返回 None
     """
+    # 优先检查期望的目标位置是否已存在
+    if expected_output_dir.exists() and expected_output_dir.is_dir():
+        skill_md = expected_output_dir / "SKILL.md"
+        if skill_md.exists():
+            content = skill_md.read_text(encoding="utf-8")
+            fm_match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+            if fm_match:
+                for line in fm_match.group(1).splitlines():
+                    if line.startswith("name:"):
+                        skill_name = line.split(":", 1)[1].strip().strip("\"'")
+                        if skill_name == name:
+                            return expected_output_dir
+
     # 尝试从响应中解析路径
     # 匹配常见路径格式
     patterns = [
@@ -151,8 +167,8 @@ def create_skill(
     console.print(f"[blue]解析 SPEC 文件:[/blue] {spec_path}")
     spec = parse_spec(spec_path)
 
-    console.print(f"[blue]构建创建 prompt (lang={lang}, name={name})...[/blue]")
-    prompt = spec_to_prompt(spec, name=name, lang=lang)
+    console.print(f"[blue]构建创建 prompt (lang={lang}, name={name}, output={output_dir})...[/blue]")
+    prompt = spec_to_prompt(spec, name=name, output_dir=output_dir, lang=lang)
 
     console.print(f"[blue]加载 skill-creator 技能，创建 agent...[/blue]")
     skills_dir = str(SKILLFLOW_SKILLS_DIR)
@@ -161,8 +177,8 @@ def create_skill(
     console.print("[blue]生成技能中（skill-creator 执行创建流程）...[/blue]")
     response, _ = run_agent(agent, prompt)
 
-    # 查找 skill-creator 创建的技能目录
-    created_dir = _find_created_skill_dir(response, name)
+    # 查找 skill-creator 创建的技能目录（优先检查目标位置）
+    created_dir = _find_created_skill_dir(response, name, output_dir)
 
     if created_dir is None:
         console.print(f"[yellow]警告: 无法找到 skill-creator 创建的技能目录[/yellow]")

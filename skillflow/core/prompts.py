@@ -6,6 +6,9 @@ SPEC_TO_PROMPT_TEMPLATE = """\
 ## 技能名称（必须使用）
 {name}
 
+## 技能创建位置（必须在此创建）
+{output_dir}
+
 ## 技能描述
 {description}
 
@@ -29,8 +32,9 @@ SPEC_TO_PROMPT_TEMPLATE = """\
 请使用 skill-creator 技能创建完整的技能目录结构。
 
 **关键约束**：
-1. YAML frontmatter 中的 `name` 字段必须填写 `{name}`（严格使用此名称，不要自行命名）
-2. 创建完成后，报告技能目录的完整路径
+1. 技能必须创建在指定位置：`{output_dir}`
+2. YAML frontmatter 中的 `name` 字段必须填写 `{name}`（严格使用此名称，不要自行命名）
+3. 创建完成后，报告技能目录的完整路径
 
 {lang_constraint}
 """
