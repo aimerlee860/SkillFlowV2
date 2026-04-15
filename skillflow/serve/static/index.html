@@ -1202,6 +1202,12 @@ async function loadSkillContent(name, taskId) {
   const content = await fetch(`/api/skill-content/${name}`).then(r => r.text());
   const area = document.getElementById('result-area-' + taskId);
   area.innerHTML = `<div class="content-preview"><pre>${content.replace(/</g, '&lt;')}</pre></div>`;
+
+  // 刷新技能列表
+  const skills = await fetch('/api/skills').then(r => r.json());
+  fillSelect('manage-skill', skills);
+  fillSelect('eval-skill', skills);
+  fillSelect('evolve-skill', skills);
 }
 
 // ========== EVAL ==========
