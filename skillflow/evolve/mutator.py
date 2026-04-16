@@ -99,16 +99,12 @@ def _parse_audit_output(text: str) -> tuple[str, dict[str, str]]:
             # SEARCH/REPLACE 模式：对原文做定点替换
             full_text = modified_files.get(rel_path, "")  # 支持同一文件多次出现
             if not full_text:
-                # 第一次遇到该文件，从磁盘读取
-                from . import _read_skill_files  # noqa: avoid circular
-                # 尝试从已有的文件内容推断（这里直接用空串，后面处理）
-                pass
-
-            # 如果该文件还没有内容，跳过（后续由 apply_search_replace 处理）
-            if rel_path in modified_files:
-                modified_files[rel_path] = _apply_search_replace(modified_files[rel_path], sr_matches)
+                # 第一次遇到该文件，暂时保留原始块，让 audit_skill 后续处理
+                # audit_skill 会从磁盘读取原始文件并应用替换
+                modified_files[rel_path] = block
             else:
-                modified_files[rel_path] = block  # 暂存，后续在 audit_skill 中处理
+                # 同一文件多次出现，增量替换
+                modified_files[rel_path] = _apply_search_replace(full_text, sr_matches)
         else:
             # 完整文件模式（兼容旧版）
             modified_files[rel_path] = block

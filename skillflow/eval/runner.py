@@ -9,6 +9,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Optional, Callable
 
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -24,8 +25,14 @@ debug_logger = logging.getLogger("skillflow.debug")
 _PROGRESS_FILE = "eval_progress.jsonl"
 
 
-def judge_response(test_point: str, question: str, response: str) -> tuple[dict, float]:
+def judge_response(test_point: str, question: str, response: str, max_retries: int = 3) -> tuple[dict, float]:
     """使用 LLM-as-judge 评估响应。
+
+    Args:
+        test_point: 测试点名称
+        question: 测试问题
+        response: agent 响应
+        max_retries: 最大重试次数（默认 3 次）
 
     Returns:
         (result_dict, elapsed_seconds)
@@ -36,11 +43,42 @@ def judge_response(test_point: str, question: str, response: str) -> tuple[dict,
         response=response,
     )
     llm = get_llm()
-    t0 = time.perf_counter()
-    resp = llm.invoke(prompt)
-    elapsed = time.perf_counter() - t0
-    text = resp.content if hasattr(resp, "content") else str(resp)
-    return _extract_judge_result(text), elapsed
+
+    total_elapsed = 0.0
+    last_error = None
+
+    for attempt in range(max_retries):
+        t0 = time.perf_counter()
+        try:
+            resp = llm.invoke(prompt)
+            elapsed = time.perf_counter() - t0
+            total_elapsed += elapsed
+
+            text = resp.content if hasattr(resp, "content") else str(resp)
+            result = _extract_judge_result(text)
+
+            # 检查是否为 JSON 解析失败
+            if "JSON 解析失败" in result.get("reason", ""):
+                last_error = result["reason"]
+                console.print(f"[yellow]Judge JSON 解析失败 (attempt {attempt+1}/{max_retries}), 重试...[/yellow]")
+                continue
+
+            # 成功，返回结果
+            return result, total_elapsed
+
+        except Exception as e:
+            elapsed = time.perf_counter() - t0
+            total_elapsed += elapsed
+            last_error = str(e)
+            console.print(f"[yellow]Judge 调用异常 (attempt {attempt+1}/{max_retries}): {e}, 重试...[/yellow]")
+
+    # 所有重试都失败，返回默认失败结果
+    console.print(f"[red]Judge 重试 {max_retries} 次后仍失败[/red]")
+    return {
+        "pass": False,
+        "score": 0.0,
+        "reason": f"Judge 重试失败: {last_error[:100] if last_error else 'unknown'}",
+    }, total_elapsed
 
 
 def _run_single_trial(
@@ -126,6 +164,7 @@ def run_eval(
     collect_trace: bool = False,
     output_dir: str | Path | None = None,
     save_trace: bool = False,
+    emit_progress: Optional[Callable[[str, str, dict], None]] = None,
 ) -> dict:
     """运行技能评估。
 
@@ -138,6 +177,7 @@ def run_eval(
         collect_trace: 是否收集执行轨迹
         output_dir: 输出目录（提供则启用 JSONL 增量保存）
         save_trace: 是否将执行轨迹落盘（需要 output_dir，隐含 collect_trace）
+        emit_progress: 进度回调函数，签名 (event_type, event_data)
 
     Returns:
         评估结果 dict
@@ -201,6 +241,19 @@ def run_eval(
                             **result,
                         })
 
+                    # 发送进度事件
+                    if emit_progress:
+                        emit_progress("progress", {
+                            "phase": "eval",
+                            "case_idx": i,
+                            "total_cases": len(test_cases),
+                            "trial": trial_idx + 1,
+                            "total_trials": trials,
+                            "test_point": tc["test_point"],
+                            "score": result.get("score", 0),
+                            "pass": result.get("pass", False),
+                        })
+
                 results[i] = {
                     "test_point": tc["test_point"],
                     "question": tc["question"],
@@ -237,6 +290,19 @@ def run_eval(
                             "test_point": tp,
                             "question": q,
                             **{k: v for k, v in result.items() if k != "_trace"},
+                        })
+
+                    # 发送进度事件
+                    if emit_progress:
+                        emit_progress("progress", {
+                            "phase": "eval",
+                            "case_idx": case_idx,
+                            "total_cases": len(test_cases),
+                            "trial": trial_idx + 1,
+                            "total_trials": trials,
+                            "test_point": tp,
+                            "score": result.get("score", 0),
+                            "pass": result.get("pass", False),
                         })
 
                 for i, tc in enumerate(test_cases):
@@ -392,10 +458,34 @@ def _build_eval_result(
 
 def _extract_judge_result(text: str) -> dict:
     """从 judge 响应中提取结果。"""
-    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+    stripped = text.strip()
+
+    # 尝试提取 ```json ... ``` 代码块
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", stripped, re.DOTALL)
     if match:
-        text = match.group(1)
-    result = json.loads(text.strip())
+        stripped = match.group(1).strip()
+
+    # 尝试找到第一个 { 和最后一个 } 之间的内容
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        json_str = stripped[start : end + 1]
+    else:
+        json_str = stripped
+
+    # 尝试解析 JSON
+    try:
+        result = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Judge JSON 解析失败: {e}[/red]")
+        console.print(f"[dim]响应内容: {stripped[:300]}[/dim]")
+        # 返回默认失败结果
+        return {
+            "pass": False,
+            "score": 0.0,
+            "reason": f"JSON 解析失败: {str(e)[:100]}",
+        }
+
     return {
         "pass": bool(result.get("pass", False)),
         "score": float(result.get("score", 0.0)),

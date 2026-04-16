@@ -36,6 +36,7 @@ class EvolveRequest(BaseModel):
 
 @router.post("/evolve")
 def start_evolve(req: EvolveRequest, request: Request):
+    """启动技能演化任务。"""
     tm = request.app.state.task_manager
 
     skill_path = Path.cwd() / "skills" / req.skill
@@ -46,54 +47,39 @@ def start_evolve(req: EvolveRequest, request: Request):
     if req.spec:
         spec_path = str(Path.cwd() / "specs" / req.spec)
 
-    output_dir = Path.cwd() / "results" / req.skill / "evolve"
+    output_dir = str(Path.cwd() / "results" / req.skill / "evolve")
 
-    task = tm.create_task("evolve", skill=req.skill)
+    # 构建参数
+    params = {
+        "skill_path": str(skill_path),
+        "spec_path": spec_path,
+        "output_dir": output_dir,
+        "threshold": req.threshold,
+        "trials": req.trials,
+        "parallel": req.parallel,
+        "max_iterations": req.max_iterations,
+        "patience": req.patience,
+        "mode": req.mode,
+        "speed": req.speed,
+        "ignore_cache": req.ignore_cache,
+        "test_cases_file": req.test_cases_file,
+        "debug": req.debug,
+        "save_trace": req.save_trace,
+    }
 
-    def _run():
-        from ...evolve.orchestrator import evolve_skill
+    # 创建任务
+    task = tm.create_task("evolve", skill=req.skill, params=params, output_dir=output_dir)
 
-        try:
-            result = evolve_skill(
-                skill_path=skill_path,
-                spec_path=spec_path,
-                output_dir=output_dir,
-                threshold=req.threshold,
-                trials=req.trials,
-                parallel=req.parallel,
-                max_iterations=req.max_iterations,
-                patience=req.patience,
-                mode=req.mode,
-                speed=req.speed,
-                ignore_cache=req.ignore_cache,
-                test_cases_file=req.test_cases_file,
-                debug=req.debug,
-                save_trace=req.save_trace,
-            )
-            task.result = result
-            task.status = "completed"
-            task.progress_events.append(
-                {"type": "done", "status": "completed", "result": result}
-            )
-        except Exception as e:
-            task.status = "failed"
-            task.error = str(e)
-            task.progress_events.append(
-                {"type": "done", "status": "failed", "error": str(e)}
-            )
+    # 发送初始状态
+    tm.emit_progress(task.id, "status", {"message": "Starting evolution..."})
 
-    # evolve_log.json 路径在 _run 执行时才确定（内部创建 timestamp 子目录）
-    # 但我们可以轮询 output_dir 下最新的 timestamp 目录
-    task.progress_events.append(
-        {"type": "status", "message": "Starting evolution..."}
-    )
-    task.status = "running"
-    tm._executor.submit(_run)
+    # 提交执行
+    status = tm.submit(task.id)
 
-    # 启动 evolve_log.json 轮询
-    _start_evolve_watcher(tm, task, output_dir)
+    # 启动 evolve_log 轮询（用于实时推送迭代进度）
+    _start_evolve_watcher(tm, task, Path(output_dir))
 
-    return {"task_id": task.id, "status": "running"}
+    return {"task_id": task.id, "status": status}
 
 
 def _start_evolve_watcher(tm, task, output_dir: Path):
@@ -102,7 +88,7 @@ def _start_evolve_watcher(tm, task, output_dir: Path):
 
     def _watch():
         nonlocal seen_iters
-        while task.status in ("pending", "running"):
+        while task.status in ("pending", "queued", "running"):
             try:
                 # 找到最新的 timestamp 子目录
                 if not output_dir.exists():
@@ -122,9 +108,7 @@ def _start_evolve_watcher(tm, task, output_dir: Path):
                 history = data.get("history", [])
                 if len(history) > seen_iters:
                     for record in history[seen_iters:]:
-                        task.progress_events.append(
-                            {"type": "iteration", "data": record}
-                        )
+                        tm.emit_progress(task.id, "iteration", record)
                     seen_iters = len(history)
             except Exception:
                 pass
@@ -135,26 +119,34 @@ def _start_evolve_watcher(tm, task, output_dir: Path):
 
 @router.get("/evolve/{task_id}/progress")
 async def evolve_progress(task_id: str, request: Request):
+    """SSE 进度流。"""
     tm = request.app.state.task_manager
     task = tm.get_task(task_id)
     if not task:
         return {"error": "task not found"}
 
     async def _stream():
-        last_idx = 0
-        while task.status in ("pending", "running"):
-            while last_idx < len(task.progress_events):
-                yield {"data": json.dumps(task.progress_events[last_idx])}
-                last_idx += 1
+        last_seq = -1
+        current_task = task
+        while current_task.status in ("pending", "queued", "running"):
+            events = tm.get_progress_events(task_id, after_seq=last_seq)
+            for ev in events:
+                yield {"data": json.dumps(ev)}
+                last_seq = ev["seq"]
             await asyncio.sleep(0.5)
-        while last_idx < len(task.progress_events):
-            yield {"data": json.dumps(task.progress_events[last_idx])}
-            last_idx += 1
+            current_task = tm.get_task(task_id)
+            if not current_task:
+                break
+
+        # 发送剩余事件
+        events = tm.get_progress_events(task_id, after_seq=last_seq)
+        for ev in events:
+            yield {"data": json.dumps(ev)}
 
     return EventSourceResponse(_stream())
 
 
-# ===== 版本管理 =====
+# ===== 版本管理 API（保留原有功能）=====
 
 _CWD = Path.cwd()
 
@@ -165,11 +157,9 @@ def _resolve_skill_dir(skill_name: str, run_id: str, version: str) -> Path | Non
     if not run_dir.exists():
         return None
     if version == "baseline":
-        # baseline_skill/{skill_name}/
         candidates = list((run_dir / "baseline_skill").iterdir())
         return candidates[0] if candidates else None
     else:
-        # iter-{n}/{skill_name}/
         for d in run_dir.iterdir():
             if d.is_dir() and d.name == version:
                 skill_dirs = [c for c in d.iterdir() if c.is_dir()]
@@ -184,7 +174,6 @@ def list_evolve_versions(skill_name: str, run_id: str):
     if not run_dir.exists():
         return {"error": f"Run not found: {run_id}"}
 
-    # 读取 evolve_log 获取元数据
     log_file = run_dir / "evolve_log.json"
     log_data = {}
     if log_file.exists():
@@ -196,7 +185,6 @@ def list_evolve_versions(skill_name: str, run_id: str):
 
     versions = []
 
-    # baseline
     baseline_dir = _resolve_skill_dir(skill_name, run_id, "baseline")
     if baseline_dir and baseline_dir.exists():
         versions.append({
@@ -207,7 +195,6 @@ def list_evolve_versions(skill_name: str, run_id: str):
             "best": best_iter == 0,
         })
 
-    # iterations
     for d in sorted(run_dir.iterdir()):
         if not d.is_dir() or not d.name.startswith("iter-"):
             continue
@@ -234,7 +221,7 @@ def list_evolve_versions(skill_name: str, run_id: str):
 @router.get("/evolve-diff/{skill_name}/{run_id}", response_class=PlainTextResponse)
 def get_evolve_diff(skill_name: str, run_id: str, frm: str = "baseline", to: str = ""):
     """返回两个版本之间的 unified diff。"""
-    from ...evolve.guards import build_diff_text, snapshot_files
+    from ..evolve.guards import build_diff_text, snapshot_files
 
     if not to:
         return PlainTextResponse("缺少 to 参数", status_code=400)
@@ -288,14 +275,12 @@ def apply_evolve_version(skill_name: str, run_id: str, version: str):
     if not target.exists():
         return {"error": f"当前技能目录不存在: {skill_name}"}
 
-    # 备份当前版本
     backup_dir = _CWD / "results" / skill_name / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d%H%M%S")
     backup_path = backup_dir / f"pre-apply-{version}-{ts}"
     shutil.copytree(target, backup_path)
 
-    # 覆盖：先清空再复制
     for item in target.iterdir():
         if item.is_dir():
             shutil.rmtree(item)

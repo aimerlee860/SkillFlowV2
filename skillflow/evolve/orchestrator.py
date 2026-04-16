@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import time
 from pathlib import Path
+from typing import Optional, Callable
 
 from rich.console import Console
 from rich.table import Table
@@ -44,6 +45,7 @@ def evolve_skill(
     test_cases_file: str | Path | None = None,
     debug: bool = False,
     save_trace: bool = False,
+    emit_progress: Optional[Callable[[str, str, dict], None]] = None,
 ) -> dict:
     """执行多轮技能演化流程。
 
@@ -62,6 +64,7 @@ def evolve_skill(
         test_cases_file: 测试用例 JSON 文件路径，提供则跳过生成直接加载
         debug: 是否启用 debug 中间件
         save_trace: 是否将执行轨迹落盘到各 iter-*/trace/ 子目录
+        emit_progress: 进度回调函数，签名 (event_type, event_data)
 
     Returns:
         演化记录 dict
@@ -69,6 +72,10 @@ def evolve_skill(
     skill_path = Path(skill_path).resolve()
     output_dir = Path(output_dir)
     ensure_dir(output_dir)
+
+    def _emit(event_type: str, data: dict) -> None:
+        if emit_progress:
+            emit_progress(event_type, data)
 
     # 创建 timestamp 运行目录，支持多次执行
     timestamp = time.strftime("%Y%m%d%H%M")
@@ -80,6 +87,7 @@ def evolve_skill(
 
     # Step 1: 获取测试用例
     console.print("[bold blue]Step 1: 获取测试用例[/bold blue]")
+    _emit("status", {"phase": "test_cases", "message": "获取测试用例..."})
     if test_cases_file:
         console.print(f"[blue]加载测试用例文件:[/blue] {test_cases_file}")
         data = load_json(test_cases_file)
@@ -92,9 +100,15 @@ def evolve_skill(
             ignore_cache=ignore_cache,
         )
     console.print(f"[green]共 {len(test_cases)} 个测试用例[/green]\n")
+    _emit("status", {"phase": "test_cases", "message": f"共 {len(test_cases)} 个测试用例", "count": len(test_cases)})
 
     # Step 2: Baseline eval
     console.print("[bold blue]Step 2: 运行 Baseline 评估[/bold blue]")
+    _emit("status", {"phase": "baseline_eval", "message": "运行 Baseline 评估..."})
+
+    def _baseline_progress(event_type: str, data: dict) -> None:
+        _emit(event_type, {**data, "phase": "baseline_eval"})
+
     baseline_result = run_eval(
         skill_path=skill_path,
         test_cases=test_cases,
@@ -104,6 +118,7 @@ def evolve_skill(
         collect_trace=True,
         output_dir=output_dir,
         save_trace=save_trace,
+        emit_progress=_baseline_progress,
     )
     save_json(output_dir / "baseline.json",
               {k: v for k, v in baseline_result.items() if k != "_traces"})
@@ -137,8 +152,16 @@ def evolve_skill(
     stop_reason = "max_iterations"
     log_file = output_dir / "evolve_log.json"
 
+    _emit("status", {"phase": "evolve", "message": f"开始演化，共 {max_iterations} 轮迭代", "max_iterations": max_iterations})
+
     for iteration in range(1, max_iterations + 1):
         console.rule(f"[bold cyan]演化轮次 {iteration}/{max_iterations} ({mode})[/bold cyan]")
+        _emit("iteration_start", {
+            "iteration": iteration,
+            "max_iterations": max_iterations,
+            "mode": mode,
+            "best_rate": round(best_rate, 4),
+        })
 
         # 准备本轮工作目录：从基础版本完整复制
         iter_dir = output_dir / f"iter-{iteration}"
@@ -155,6 +178,8 @@ def evolve_skill(
         before_snapshot = snapshot_files(evolved_skill_dir)
 
         # 审视 + 可选反思 + 可选范例提取（就地修改 evolved_skill_dir 中的文件）
+        strategy_type = "audit" + ("+reflect" if failed_cases else "")
+        _emit("status", {"phase": "mutate", "message": f"执行 {strategy_type} 策略...", "iteration": iteration})
         if failed_cases:
             console.print(f"[yellow]{len(failed_cases)} 个失败用例，执行审视+反思[/yellow]")
         else:
@@ -242,6 +267,11 @@ def evolve_skill(
             continue
 
         # 评估演化后的技能（greedy 模式需要采集轨迹）
+        _emit("status", {"phase": "eval", "message": f"评估轮次 {iteration}...", "iteration": iteration})
+
+        def _iter_progress(event_type: str, data: dict) -> None:
+            _emit(event_type, {**data, "phase": "iter_eval", "iteration": iteration})
+
         evolved_result = run_eval(
             skill_path=evolved_skill_dir,
             test_cases=test_cases,
@@ -251,6 +281,7 @@ def evolve_skill(
             collect_trace=(mode == "greedy") or save_trace,
             output_dir=iter_dir,
             save_trace=save_trace,
+            emit_progress=_iter_progress,
         )
         evolved_rate = evolved_result["overall_reward"]
         save_json(iter_dir / "eval.json",
@@ -289,6 +320,15 @@ def evolve_skill(
             "summary": summary,
         }
         history.append(iter_record)
+
+        # 发送迭代结果事件
+        _emit("iteration", {
+            "iteration": iteration,
+            "strategy": strategy,
+            "evolved_rate": round(evolved_rate, 4),
+            "improvement": round(improvement, 4),
+            "accepted": accepted,
+        })
 
         # 输出本轮对比
         _print_iteration_table(iteration, best_rate, evolved_rate, improvement, accepted)

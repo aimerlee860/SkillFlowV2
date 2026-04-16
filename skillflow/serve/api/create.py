@@ -24,82 +24,75 @@ class CreateRequest(BaseModel):
 
 @router.post("/create")
 def start_create(req: CreateRequest, request: Request):
+    """启动技能创建任务。"""
     tm = request.app.state.task_manager
 
-    # 确定_spec_path：优先用 spec_content，其次用 spec 文件名
+    # 确定 spec_path
     if req.spec_content.strip():
-        # 将文本内容写入临时文件
         tmp = tempfile.NamedTemporaryFile(
             mode="w", suffix=".yaml", delete=False, encoding="utf-8"
         )
         tmp.write(req.spec_content)
         tmp.close()
-        spec_path = Path(tmp.name)
+        spec_path = str(tmp.name)
     elif req.spec:
-        spec_path = Path.cwd() / "specs" / req.spec
-        if not spec_path.exists():
+        spec_path = str(Path.cwd() / "specs" / req.spec)
+        if not Path(spec_path).exists():
             return {"error": f"Spec file not found: {req.spec}"}
     else:
         return {"error": "请提供 spec 文件名或直接输入 spec 内容"}
 
-    output_dir = Path.cwd() / "skills" / req.name
+    output_dir = str(Path.cwd() / "skills" / req.name)
 
-    task = tm.create_task("create", skill=req.name)
+    # 构建参数
+    params = {
+        "spec_path": spec_path,
+        "output_dir": output_dir,
+        "name": req.name,
+        "lang": req.lang,
+    }
 
-    def _run():
-        from ...create.creator import create_skill
+    # 创建任务
+    task = tm.create_task("create", skill=req.name, params=params, output_dir=output_dir)
 
-        try:
-            result = create_skill(
-                spec_path=spec_path,
-                output_dir=output_dir,
-                name=req.name,
-                lang=req.lang,
-            )
-            task.result = {"path": str(result)}
-            task.status = "completed"
-            task.progress_events.append(
-                {"type": "done", "status": "completed", "result": task.result}
-            )
-        except Exception as e:
-            task.status = "failed"
-            task.error = str(e)
-            task.progress_events.append(
-                {"type": "done", "status": "failed", "error": str(e)}
-            )
+    # 提交执行
+    status = tm.submit(task.id)
 
-    # 先发射一个 starting 事件
-    task.progress_events.append({"type": "status", "message": "Starting skill creation..."})
-    task.status = "running"
-    tm._executor.submit(_run)
-
-    return {"task_id": task.id, "status": "running"}
+    return {"task_id": task.id, "status": status}
 
 
 @router.get("/create/{task_id}/progress")
 async def create_progress(task_id: str, request: Request):
+    """SSE 进度流。"""
     tm = request.app.state.task_manager
     task = tm.get_task(task_id)
     if not task:
         return {"error": "task not found"}
 
     async def _stream():
-        last_idx = 0
-        while task.status in ("pending", "running"):
-            while last_idx < len(task.progress_events):
-                yield {"data": json.dumps(task.progress_events[last_idx])}
-                last_idx += 1
+        last_seq = -1
+        current_task = task
+        while current_task.status in ("pending", "queued", "running"):
+            events = tm.get_progress_events(task_id, after_seq=last_seq)
+            for ev in events:
+                yield {"data": json.dumps(ev)}
+                last_seq = ev["seq"]
             await asyncio.sleep(0.5)
+            current_task = tm.get_task(task_id)
+            if not current_task:
+                break
+
         # 发送剩余事件
-        while last_idx < len(task.progress_events):
-            yield {"data": json.dumps(task.progress_events[last_idx])}
-            last_idx += 1
+        events = tm.get_progress_events(task_id, after_seq=last_seq)
+        for ev in events:
+            yield {"data": json.dumps(ev)}
 
     return EventSourceResponse(_stream())
 
 
 @router.get("/tasks/{task_id}")
 def get_task_status(task_id: str, request: Request):
+    """获取任务状态。"""
     tm = request.app.state.task_manager
     task = tm.get_task(task_id)
     if not task:

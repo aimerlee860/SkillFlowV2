@@ -28,6 +28,7 @@ class EvalRequest(BaseModel):
 
 @router.post("/eval")
 def start_eval(req: EvalRequest, request: Request):
+    """启动技能评估任务。"""
     tm = request.app.state.task_manager
 
     skill_path = Path.cwd() / "skills" / req.skill
@@ -38,92 +39,63 @@ def start_eval(req: EvalRequest, request: Request):
     if req.spec:
         spec_path = str(Path.cwd() / "specs" / req.spec)
 
-    output_dir = Path.cwd() / "results" / req.skill / "eval" / time.strftime("%Y%m%d%H%M")
+    output_dir = str(Path.cwd() / "results" / req.skill / "eval" / time.strftime("%Y%m%d%H%M"))
 
-    task = tm.create_task("eval", skill=req.skill)
-    progress_file = output_dir / "eval_progress.jsonl"
+    # 构建参数
+    params = {
+        "skill_path": str(skill_path),
+        "spec_path": spec_path,
+        "output_dir": output_dir,
+        "trials": req.trials,
+        "parallel": req.parallel,
+        "debug": req.debug,
+        "save_trace": req.save_trace,
+        "ignore_cache": req.ignore_cache,
+        "test_cases_file": req.test_cases_file,
+        "test_cases": None,  # 运行时生成或从 test_cases_content 解析
+    }
 
-    def _run():
-        from ...eval.test_generator import generate_test_cases
-        from ...eval.runner import run_eval
+    # 处理 test_cases_content
+    if req.test_cases_content:
+        data = json.loads(req.test_cases_content)
+        params["test_cases"] = data["test_cases"] if isinstance(data, dict) else data
 
-        try:
-            # 获取测试用例
-            task.progress_events.append(
-                {"type": "status", "message": "Generating test cases..."}
-            )
+    # 创建任务
+    task = tm.create_task("eval", skill=req.skill, params=params, output_dir=output_dir)
 
-            if req.test_cases_file:
-                from ...core.utils import load_json
-                data = load_json(req.test_cases_file)
-                test_cases = data["test_cases"] if isinstance(data, dict) else data
-            elif req.test_cases_content:
-                data = json.loads(req.test_cases_content)
-                test_cases = data["test_cases"] if isinstance(data, dict) else data
-            else:
-                test_cases, _ = generate_test_cases(
-                    skill_path=skill_path,
-                    spec_path=spec_path,
-                    output_dir=output_dir,
-                    ignore_cache=req.ignore_cache,
-                )
-                # 将自动生成的测试用例推回前端，便于查看和后续复用
-                task.progress_events.append(
-                    {"type": "test_cases", "data": test_cases}
-                )
+    # 发送初始状态
+    tm.emit_progress(task.id, "status", {"message": "Starting evaluation..."})
 
-            task.progress_events.append(
-                {"type": "status", "message": f"{len(test_cases)} test cases ready, running eval..."}
-            )
+    # 提交执行
+    status = tm.submit(task.id)
 
-            # 运行评估
-            result = run_eval(
-                skill_path=skill_path,
-                test_cases=test_cases,
-                trials=req.trials,
-                parallel=req.parallel,
-                debug=req.debug,
-                output_dir=output_dir,
-                save_trace=req.save_trace,
-            )
-
-            # 清理内部不可序列化的字段
-            clean_result = {k: v for k, v in result.items() if k != "_traces"}
-            task.result = clean_result
-            task.status = "completed"
-            task.progress_events.append(
-                {"type": "done", "status": "completed", "result": clean_result}
-            )
-        except Exception as e:
-            task.status = "failed"
-            task.error = str(e)
-            task.progress_events.append(
-                {"type": "done", "status": "failed", "error": str(e)}
-            )
-
-    task.progress_events.append({"type": "status", "message": "Starting evaluation..."})
-    task.status = "running"
-    tm.submit_with_watcher(task, _run, progress_file=progress_file)
-
-    return {"task_id": task.id, "status": "running"}
+    return {"task_id": task.id, "status": status}
 
 
 @router.get("/eval/{task_id}/progress")
 async def eval_progress(task_id: str, request: Request):
+    """SSE 进度流。"""
     tm = request.app.state.task_manager
     task = tm.get_task(task_id)
     if not task:
         return {"error": "task not found"}
 
     async def _stream():
-        last_idx = 0
-        while task.status in ("pending", "running"):
-            while last_idx < len(task.progress_events):
-                yield {"data": json.dumps(task.progress_events[last_idx])}
-                last_idx += 1
+        last_seq = -1
+        current_task = task
+        while current_task.status in ("pending", "queued", "running"):
+            events = tm.get_progress_events(task_id, after_seq=last_seq)
+            for ev in events:
+                yield {"data": json.dumps(ev)}
+                last_seq = ev["seq"]
             await asyncio.sleep(0.5)
-        while last_idx < len(task.progress_events):
-            yield {"data": json.dumps(task.progress_events[last_idx])}
-            last_idx += 1
+            current_task = tm.get_task(task_id)
+            if not current_task:
+                break
+
+        # 发送剩余事件
+        events = tm.get_progress_events(task_id, after_seq=last_seq)
+        for ev in events:
+            yield {"data": json.dumps(ev)}
 
     return EventSourceResponse(_stream())

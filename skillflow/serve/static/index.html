@@ -91,6 +91,13 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 .content-preview { background: #f5f5f5; border-radius: 6px; padding: 16px; margin-top: 12px; max-height: 400px; overflow-y: auto; }
 .content-preview pre { font-family: "SF Mono", Monaco, monospace; font-size: 12px; white-space: pre-wrap; color: #333; }
 
+/* Diff viewer */
+.diff-viewer { font-family: "SF Mono", Monaco, monospace; font-size: 12px; white-space: pre; }
+.diff-header { color: #666; }
+.diff-hunk { color: #2196f3; font-weight: bold; }
+.diff-add { background: #e8f5e9; color: #2e7d32; }
+.diff-del { background: #ffebee; color: #c62828; }
+
 /* Test cases textarea */
 .tc-area { margin-top: 8px; margin-bottom: 12px; }
 .tc-area textarea {
@@ -150,6 +157,56 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 .guide-flow-arrow { color: #999; font-size: 16px; }
 .guide-tip { background: #fff8e1; border-left: 3px solid #ffb300; padding: 10px 14px; border-radius: 0 4px 4px 0; font-size: 13px; color: #5d4037; line-height: 1.6; margin-top: 12px; }
 .guide-tip code { background: #f5f0e0; padding: 1px 5px; border-radius: 3px; font-size: 12px; color: #795548; }
+
+/* Task list */
+.task-item { display: flex; align-items: center; padding: 10px 12px; border-bottom: 1px solid #eee; gap: 12px; }
+.task-item:last-child { border-bottom: none; }
+.task-item:hover { background: #fafafa; }
+.task-status-dot { width: 10px; height: 10px; border-radius: 50%; }
+.task-status-dot.running { background: #4caf50; }
+.task-status-dot.queued { background: #ff9800; }
+.task-status-dot.completed { background: #2196f3; }
+.task-status-dot.failed { background: #f44336; }
+.task-status-dot.paused { background: #9e9e9e; }
+.task-status-dot.cancelled { background: #bdbdbd; }
+.task-info { flex: 1; }
+.task-info .type { font-size: 12px; color: #888; }
+.task-info .name { font-size: 14px; color: #333; font-weight: 500; }
+.task-info .time { font-size: 11px; color: #aaa; }
+.task-actions { display: flex; gap: 6px; }
+.task-actions .btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-resume { background: #e8f5e9; color: #2e7d32; border: 1px solid #2e7d32; }
+.btn-resume:hover { background: #c8e6c9; }
+.btn-pause { background: #fff3e0; color: #e65100; border: 1px solid #e65100; }
+.btn-pause:hover { background: #ffe0b2; }
+.btn-cancel { background: #ffebee; color: #c62828; border: 1px solid #c62828; }
+.btn-cancel:hover { background: #ffcdd2; }
+.btn-retry { background: #e3f2fd; color: #1565c0; border: 1px solid #1565c0; }
+.btn-retry:hover { background: #bbdefb; }
+.btn-delete { background: #fafafa; color: #999; border: 1px solid #ddd; }
+.btn-delete:hover { background: #f5f5f5; color: #666; }
+.btn-log { background: #f5f5f5; color: #555; border: 1px solid #ddd; }
+.btn-log:hover { background: #eeeeee; }
+.task-progress { font-size: 12px; color: #888; min-width: 60px; }
+.task-error { font-size: 12px; color: #f44336; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Task detail panel */
+.task-item.expandable { cursor: pointer; }
+.task-detail { display: none; background: #f8f9fa; padding: 12px; border-bottom: 1px solid #eee; }
+.task-detail.show { display: block; }
+.task-detail-params { font-size: 12px; color: #666; margin-bottom: 8px; padding: 6px 10px; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; }
+.task-detail-params span { margin-right: 12px; }
+.task-detail-log { font-family: "SF Mono", Monaco, monospace; font-size: 12px; max-height: 300px; overflow-y: auto; background: #fff; border: 1px solid #e0e0e0; border-radius: 4px; padding: 8px 12px; margin-bottom: 8px; white-space: pre-wrap; }
+.task-detail-log .log-line { padding: 1px 0; }
+.task-detail-result { margin-top: 8px; }
+.task-detail-actions { margin-top: 8px; display: flex; gap: 8px; }
+
+/* Toast notification */
+.toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 6px; font-size: 13px; z-index: 1000; animation: slideIn 0.3s ease; }
+.toast.success { background: #4caf50; color: #fff; }
+.toast.error { background: #f44336; color: #fff; }
+.toast.info { background: #1976d2; color: #fff; }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 </style>
 </head>
 <body>
@@ -204,6 +261,20 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
       <div id="skill-actions" style="margin-top:12px;display:none">
         <button class="btn btn-danger" onclick="deleteSkill()">删除</button>
         <button class="btn btn-outline" onclick="downloadSkill()">下载 ZIP</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Tasks</h3>
+      <div id="tasks-status-bar" style="margin-bottom:12px;font-size:13px;color:#666">
+        <span id="tasks-running-count">0</span> 个运行中，
+        <span id="tasks-queue-count">0</span> 个排队，
+        最大并发 <span id="tasks-max-concurrent">5</span>
+      </div>
+      <div id="tasks-list" style="max-height:400px;overflow-y:auto">
+        <div style="color:#888;font-size:13px;padding:8px">加载中...</div>
+      </div>
+      <div style="margin-top:12px">
+        <button class="btn btn-outline" onclick="refreshTasks()">刷新</button>
       </div>
     </div>
   </div>
@@ -396,6 +467,10 @@ reference: []</textarea>
       <div class="form-row">
         <label>Trials</label>
         <input type="number" id="evolve-trials" value="5" min="1" max="50">
+      </div>
+      <div class="form-row">
+        <label>Parallel</label>
+        <input type="number" id="evolve-parallel" value="1" min="1" max="10">
       </div>
       <div class="checkbox-row">
         <label><input type="checkbox" id="evolve-ignore-cache"> 忽略缓存</label>
@@ -719,6 +794,431 @@ function fillSelect(id, items, optional = false) {
 }
 
 loadOptions();
+refreshTasks(); // 加载任务列表
+
+// --- Tasks Management ---
+let _tasksPollTimer = null;
+
+async function refreshTasks() {
+  try {
+    // 获取并发状态
+    const status = await fetch('/api/tasks/concurrent-status').then(r => r.json());
+    document.getElementById('tasks-running-count').textContent = status.running_count || 0;
+    document.getElementById('tasks-queue-count').textContent = status.queue_length || 0;
+    document.getElementById('tasks-max-concurrent').textContent = status.max_concurrent || 5;
+
+    // 更新右上角状态指示器
+    const indicator = document.getElementById('taskIndicator');
+    const dotEl = indicator.querySelector('.dot');
+    const statusText = document.getElementById('taskStatus');
+    if (status.running_count > 0) {
+      dotEl.className = 'dot running';
+      statusText.textContent = `${status.running_count} 个任务运行中`;
+    } else if (status.queue_length > 0) {
+      dotEl.className = 'dot running';
+      statusText.textContent = `${status.queue_length} 个任务排队`;
+    } else {
+      dotEl.className = 'dot idle';
+      statusText.textContent = '空闲';
+    }
+
+    // 获取任务列表
+    const resp = await fetch('/api/tasks?limit=20').then(r => r.json());
+    renderTasksList(resp.tasks || []);
+  } catch (e) {
+    console.error('refreshTasks error:', e);
+  }
+}
+
+function renderTasksList(tasks) {
+  const el = document.getElementById('tasks-list');
+  if (!tasks.length) {
+    el.innerHTML = '<div style="color:#888;font-size:13px;padding:8px">暂无任务</div>';
+    return;
+  }
+
+  const typeLabels = { create: '创建', eval: '评估', evolve: '演化' };
+  const statusLabels = {
+    pending: '等待', queued: '排队', running: '运行', paused: '暂停',
+    completed: '完成', failed: '失败', cancelled: '已取消'
+  };
+
+  let html = '';
+  for (const t of tasks) {
+    const timeStr = new Date(t.created_at * 1000).toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+
+    const progress = t.progress_total > 0 ? `${t.progress_current}/${t.progress_total}` : '';
+    const isExpandable = t.status === 'running' || t.status === 'completed' || t.status === 'failed';
+
+    html += `
+      <div class="task-item ${isExpandable ? 'expandable' : ''}" onclick="toggleTaskDetail('${t.id}', '${t.status}')">
+        <div class="task-status-dot ${t.status}"></div>
+        <div class="task-info">
+          <div class="type">${typeLabels[t.task_type] || t.task_type}</div>
+          <div class="name">${t.skill || t.id}</div>
+          <div class="time">${timeStr}</div>
+          ${t.error ? `<div class="task-error">${t.error}</div>` : ''}
+        </div>
+        <div class="task-progress">${progress}</div>
+        <div class="task-actions" onclick="event.stopPropagation()">
+          ${t.status === 'running' ? `<button class="btn btn-sm btn-pause" onclick="pauseTask('${t.id}')">暂停</button>` : ''}
+          ${t.status === 'paused' ? `<button class="btn btn-sm btn-resume" onclick="resumeTask('${t.id}')">恢复</button>` : ''}
+          ${t.status === 'queued' || t.status === 'pending' ? `<button class="btn btn-sm btn-cancel" onclick="cancelTask('${t.id}')">取消</button>` : ''}
+          ${t.status === 'failed' ? `<button class="btn btn-sm btn-retry" onclick="retryTask('${t.id}')">重试</button>` : ''}
+          ${t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled' ? `<button class="btn btn-sm btn-delete" onclick="deleteTask('${t.id}')">删除</button>` : ''}
+        </div>
+      </div>
+      <div class="task-detail" id="task-detail-${t.id}">
+        <div class="task-detail-params" id="task-params-${t.id}"></div>
+        <div class="task-detail-log" id="task-log-${t.id}">加载中...</div>
+        <div class="task-detail-result" id="task-result-${t.id}"></div>
+      </div>
+    `;
+  }
+  el.innerHTML = html;
+
+  // 自动展开运行中的任务
+  for (const t of tasks) {
+    if (t.status === 'running') {
+      toggleTaskDetail(t.id, t.status);
+    }
+  }
+}
+
+// 任务详情展开/收起
+let _taskSSEConnections = {}; // 保存 SSE 连接
+let _expandedTasks = {}; // 记录已展开的任务
+
+function toggleTaskDetail(taskId, status) {
+  const detailEl = document.getElementById('task-detail-' + taskId);
+  if (!detailEl) return;
+
+  const isExpanded = detailEl.classList.contains('show');
+  if (isExpanded) {
+    detailEl.classList.remove('show');
+    // 关闭 SSE 连接
+    if (_taskSSEConnections[taskId]) {
+      _taskSSEConnections[taskId].close();
+      delete _taskSSEConnections[taskId];
+    }
+    delete _expandedTasks[taskId];
+  } else {
+    detailEl.classList.add('show');
+    _expandedTasks[taskId] = true;
+    loadTaskLog(taskId);
+    // 运行中的任务开启 SSE 实时更新
+    if (status === 'running') {
+      connectTaskSSE(taskId);
+    }
+  }
+}
+
+function loadTaskLog(taskId) {
+  const logEl = document.getElementById('task-log-' + taskId);
+  const resultEl = document.getElementById('task-result-' + taskId);
+  const paramsEl = document.getElementById('task-params-' + taskId);
+  if (!logEl) return;
+
+  fetch('/api/tasks/' + taskId).then(r => r.json()).then(data => {
+    const events = data.events || [];
+    // 渲染进度事件为日志
+    let logHtml = '';
+    for (const ev of events) {
+      const typeClass = ev.type === 'status' ? 'info' : (ev.type === 'error' ? 'error' : '');
+      const msg = formatEventMessage(ev);
+      logHtml += `<div class="log-line ${typeClass}">${msg}</div>`;
+    }
+    if (!logHtml) logHtml = '<div class="log-line" style="color:#888">暂无进度记录</div>';
+    logEl.innerHTML = logHtml;
+    logEl.scrollTop = logEl.scrollHeight;
+
+    // 渲染参数摘要
+    const task = data.task;
+    if (paramsEl && task && task.params) {
+      paramsEl.innerHTML = formatTaskParams(task);
+    }
+
+    // 渲染结果（已完成/失败/取消的任务）
+    if (task && task.result) {
+      resultEl.innerHTML = formatTaskResult(task);
+      // 初始化版本管理 UI（仅 evolve 任务）
+      if (task.task_type === 'evolve' && task.status === 'completed') {
+        initEvolveVersionUI(taskId);
+      }
+    } else if (task && task.status === 'failed' && task.error) {
+      resultEl.innerHTML = `<div class="log-line error">失败: ${task.error}</div>`;
+    } else if (task && task.status === 'cancelled') {
+      resultEl.innerHTML = `<div class="log-line info">任务已取消</div>`;
+    }
+  }).catch(e => {
+    logEl.innerHTML = '<div class="log-line error">加载失败</div>';
+  });
+}
+
+function formatEventMessage(ev) {
+  const d = ev.data || {};
+  switch (ev.type) {
+    case 'status':
+      const phaseLabel = {
+        'init': '初始化',
+        'test_cases': '测试用例',
+        'baseline_eval': 'Baseline评估',
+        'mutate': '演化变异',
+        'eval': '评估',
+        'iter_eval': '迭代评估',
+        'evolve': '演化',
+        'resume': '恢复'
+      };
+      const phase = phaseLabel[d.phase] || '';
+      return `[状态] ${phase ? phase + ': ' : ''}${d.message || ''}`;
+    case 'progress':
+      const caseInfo = d.total_cases ? `${d.case_idx + 1}/${d.total_cases}` : '';
+      const trialInfo = d.total_trials ? `trial ${d.trial}/${d.total_trials}` : '';
+      return `[进度] ${caseInfo} ${d.test_point || ''} ${trialInfo} score=${d.score != null ? d.score.toFixed(2) : '-'} ${d.pass ? 'PASS' : 'FAIL'}`;
+    case 'iteration_start':
+      return `[轮次 ${d.iteration}/${d.max_iterations}] 开始 ${d.mode || ''}模式, 当前最优=${d.best_rate != null ? d.best_rate.toFixed(4) : '-'}`;
+    case 'iteration':
+      const improveStr = d.improvement != null ? (d.improvement >= 0 ? '+' + d.improvement.toFixed(4) : d.improvement.toFixed(4)) : '-';
+      return `[轮次 ${d.iteration}] ${d.strategy || ''} rate=${d.evolved_rate != null ? d.evolved_rate.toFixed(4) : '-'} ${improveStr} ${d.accepted ? 'ACCEPTED' : 'REJECTED'}`;
+    case 'test_cases':
+      return `[测试用例] ${d.count || ''} 个`;
+    case 'done':
+      return `[完成] ${d.status || ''}`;
+    default:
+      return JSON.stringify(d);
+  }
+}
+
+function formatTaskParams(task) {
+  const p = task.params || {};
+  const type = task.task_type;
+
+  if (type === 'eval') {
+    const items = [
+      `Trials: ${p.trials || 5}`,
+      `Parallel: ${p.parallel || 1}`,
+      p.save_trace ? 'Save Trace' : null,
+      p.debug ? 'Debug' : null,
+    ].filter(Boolean);
+    return items.map(i => `<span>${i}</span>`).join('');
+  }
+
+  if (type === 'evolve') {
+    const items = [
+      `Trials: ${p.trials || 5}`,
+      `Parallel: ${p.parallel || 1}`,
+      `Max Iter: ${p.max_iterations || 100}`,
+      `Patience: ${p.patience || 10}`,
+      `Threshold: ${p.threshold || 0.01}`,
+      `Mode: ${p.mode || 'steady'}`,
+      `Speed: ${p.speed || 'low'}`,
+      p.save_trace ? 'Save Trace' : null,
+      p.debug ? 'Debug' : null,
+    ].filter(Boolean);
+    return items.map(i => `<span>${i}</span>`).join('');
+  }
+
+  if (type === 'create') {
+    const items = [
+      `Lang: ${p.lang || 'auto'}`,
+      p.name ? `Name: ${p.name}` : null,
+    ].filter(Boolean);
+    return items.map(i => `<span>${i}</span>`).join('');
+  }
+
+  return '';
+}
+
+function formatTaskResult(task) {
+  const r = task.result || {};
+  if (task.task_type === 'eval') {
+    let html = `<div class="summary-box">
+      <div class="metric"><div class="label">Overall Reward</div><div class="value">${(r.overall_reward || 0).toFixed(4)}</div></div>
+      <div class="metric"><div class="label">Total Cases</div><div class="value">${r.total_cases || 0}</div></div>
+      <div class="metric"><div class="label">Trials</div><div class="value">${r.trials || 0}</div></div>
+    </div>`;
+    if (r.test_cases && r.test_cases.length) {
+      html += `<table class="result-table"><thead><tr><th>测试点</th><th>Pass Rate</th><th>Reward</th></tr></thead>
+        <tbody>${r.test_cases.map(tc => `<tr><td>${(tc.test_point || '').substring(0, 40)}</td><td>${(tc.pass_rate || 0).toFixed(2)}</td><td>${(tc.reward || 0).toFixed(4)}</td></tr>`).join('')}</tbody></table>`;
+    }
+    return html;
+  } else if (task.task_type === 'evolve') {
+    const improve = r.improvement || 0;
+    const skill = task.skill || r.skill || '';
+    const runId = r.run_id || '';
+    // 初始化版本管理所需的上下文
+    window['_evolve_' + task.id] = { skill, runId };
+    let html = `<div class="summary-box">
+      <div class="metric"><div class="label">最优 Reward</div><div class="value">${(r.evolved_rate || 0).toFixed(4)}</div></div>
+      <div class="metric"><div class="label">提升</div><div class="value">${improve >= 0 ? '+' + improve.toFixed(4) : improve.toFixed(4)}</div></div>
+      <div class="metric"><div class="label">迭代次数</div><div class="value">${r.iterations_done || 0}</div></div>
+      <div class="metric"><div class="label">最优版本</div><div class="value">${r.best_iter === 0 ? 'baseline' : 'iter-' + r.best_iter}</div></div>
+    </div>`;
+    // 版本管理区域（仅在有 runId 时显示）
+    if (skill && runId) {
+      html += `<div class="version-manager" style="margin-top:12px;padding:10px;border:1px solid #ddd;border-radius:4px;background:#fafafa;">
+        <div style="font-weight:bold;margin-bottom:8px;">版本管理</div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+          <label>From:</label><select id="vdiff-from-${task.id}" style="padding:2px 4px;"></select>
+          <label>To:</label><select id="vdiff-to-${task.id}" style="padding:2px 4px;"></select>
+          <button class="btn btn-sm" onclick="loadEvolveDiff('${task.id}')">查看 Diff</button>
+        </div>
+        <div id="vdiff-result-${task.id}" style="max-height:200px;overflow:auto;font-size:12px;background:#fff;padding:4px;border:1px solid #eee;"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+          <label>操作:</label>
+          <select id="vaction-ver-${task.id}" style="padding:2px 4px;"></select>
+          <button class="btn btn-sm" onclick="downloadEvolveVersion('${task.id}')">下载版本</button>
+          <button class="btn btn-sm btn-primary" onclick="applyEvolveVersion('${task.id}')">应用版本</button>
+        </div>
+      </div>`;
+    }
+    return html;
+  } else if (task.task_type === 'create') {
+    const skillName = r.skill_name || task.skill || '未知技能';
+    const statusLabels = { completed: '成功', failed: '失败', cancelled: '已取消' };
+    const statusText = statusLabels[task.status] || task.status;
+    return `<div class="summary-box">
+      <div class="metric"><div class="label">任务状态</div><div class="value">${statusText}</div></div>
+      <div class="metric"><div class="label">技能名称</div><div class="value">${skillName}</div></div>
+    </div>`;
+  }
+  return '';
+}
+
+function connectTaskSSE(taskId) {
+  if (_taskSSEConnections[taskId]) return;
+
+  const es = new EventSource('/api/tasks/' + taskId + '/progress');
+  _taskSSEConnections[taskId] = es;
+
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    appendTaskLog(taskId, data);
+  };
+  es.onerror = () => {
+    es.close();
+    delete _taskSSEConnections[taskId];
+    // 刷新一次获取最终状态
+    refreshTasks();
+  };
+}
+
+function appendTaskLog(taskId, ev) {
+  const logEl = document.getElementById('task-log-' + taskId);
+  if (!logEl) return;
+
+  const typeClass = ev.type === 'status' ? 'info' : (ev.type === 'error' ? 'error' : 'success');
+  const msg = formatEventMessage(ev);
+  const line = document.createElement('div');
+  line.className = 'log-line ' + typeClass;
+  line.textContent = msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+
+  // done 事件时更新结果
+  if (ev.type === 'done') {
+    const resultEl = document.getElementById('task-result-' + taskId);
+    const paramsEl = document.getElementById('task-params-' + taskId);
+    if (resultEl && ev.data) {
+      if (ev.data.status === 'completed') {
+        // 重新加载任务获取完整 result
+        fetch('/api/tasks/' + taskId).then(r => r.json()).then(data => {
+          if (data.task) {
+            resultEl.innerHTML = formatTaskResult(data.task);
+            if (paramsEl) paramsEl.innerHTML = formatTaskParams(data.task);
+            // 初始化版本管理 UI（仅 evolve 任务）
+            if (data.task.task_type === 'evolve') {
+              initEvolveVersionUI(taskId);
+            }
+          }
+        });
+      } else if (ev.data.error) {
+        resultEl.innerHTML = `<div class="log-line error">失败: ${ev.data.error}</div>`;
+      }
+    }
+    // 关闭 SSE
+    if (_taskSSEConnections[taskId]) {
+      _taskSSEConnections[taskId].close();
+      delete _taskSSEConnections[taskId];
+    }
+  }
+}
+
+async function pauseTask(taskId) {
+  const resp = await fetch('/api/tasks/' + taskId + '/pause', { method: 'POST' }).then(r => r.json());
+  if (resp.success) {
+    refreshTasks();
+  } else {
+    showToast('暂停失败: ' + (resp.error || '未知错误'), 'error');
+  }
+}
+
+async function resumeTask(taskId) {
+  const resp = await fetch('/api/tasks/' + taskId + '/resume', { method: 'POST' }).then(r => r.json());
+  if (resp.success) {
+    refreshTasks();
+    toggleTaskDetail(taskId, 'running');
+  } else {
+    showToast('恢复失败: ' + (resp.error || '未知错误'), 'error');
+  }
+}
+
+async function cancelTask(taskId) {
+  if (!confirm('确定取消此任务？')) return;
+  const resp = await fetch('/api/tasks/' + taskId, { method: 'DELETE' }).then(r => r.json());
+  if (resp.success) {
+    refreshTasks();
+  } else {
+    showToast('取消失败: ' + (resp.error || '未知错误'), 'error');
+  }
+}
+
+async function retryTask(taskId) {
+  const resp = await fetch('/api/tasks/' + taskId + '/retry', { method: 'POST' }).then(r => r.json());
+  if (resp.success) {
+    refreshTasks();
+    toggleTaskDetail(taskId, 'running');
+  } else {
+    showToast('重试失败: ' + (resp.error || '未知错误'), 'error');
+  }
+}
+
+async function deleteTask(taskId) {
+  if (!confirm('确定删除此任务？')) return;
+  const resp = await fetch('/api/tasks/' + taskId + '/delete', { method: 'DELETE' }).then(r => r.json());
+  if (resp.success) {
+    // 关闭可能展开的详情
+    const detailEl = document.getElementById('task-detail-' + taskId);
+    if (detailEl) detailEl.classList.remove('show');
+    refreshTasks();
+  } else {
+    showToast('删除失败: ' + (resp.error || '未知错误'), 'error');
+  }
+}
+
+// Toast 提示
+function showToast(message, type = 'info') {
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 3000);
+}
+
+// 定时刷新任务列表（仅在有运行任务时）
+function startTasksPolling() {
+  if (_tasksPollTimer) return;
+  _tasksPollTimer = setInterval(refreshTasks, 5000);
+}
+
+function stopTasksPolling() {
+  if (_tasksPollTimer) {
+    clearInterval(_tasksPollTimer);
+    _tasksPollTimer = null;
+  }
+}
 
 // --- Manage Tab ---
 async function onManageSkillChange() {
@@ -905,11 +1405,9 @@ async function generateEvalTestCases() {
     return;
   }
 
-  const taskId = resp.task_id;
-  addRunningTask(taskId);
-
   connectSSE(
-    '/api/test-cases/' + encodeURIComponent(skill) + '/generate/' + taskId + '/progress', taskId,
+    '/api/test-cases/' + encodeURIComponent(skill) + '/generate/' + resp.task_id + '/progress',
+    null,
     (data) => {
       if (data.type === 'status') {
         btn.textContent = data.message;
@@ -940,40 +1438,13 @@ async function onEvolveSkillChange() {
 
 function onEvolveTcModeChange() {}
 
-// --- Multi-task tracking ---
-const runningTasks = new Set();
-
-function addRunningTask(taskId) {
-  runningTasks.add(taskId);
-  updateTaskIndicator();
-}
-
-function removeRunningTask(taskId) {
-  runningTasks.delete(taskId);
-  updateTaskIndicator();
-}
-
-function updateTaskIndicator() {
-  const dot = document.querySelector('#taskIndicator .dot');
-  const text = document.getElementById('taskStatus');
-  const count = runningTasks.size;
-  if (count > 0) {
-    dot.className = 'dot running';
-    text.textContent = count + ' 个任务运行中';
-  } else {
-    dot.className = 'dot idle';
-    text.textContent = '空闲';
-  }
-}
-
-// --- SSE helper ---
+// --- SSE helper (for test case generation) ---
 function connectSSE(url, taskId, onEvent, onDone) {
   const es = new EventSource(url);
   es.onmessage = (e) => {
     const data = JSON.parse(e.data);
     if (data.type === 'done') {
       es.close();
-      removeRunningTask(taskId);
       if (onDone) onDone(data);
     } else {
       if (onEvent) onEvent(data);
@@ -981,41 +1452,8 @@ function connectSSE(url, taskId, onEvent, onDone) {
   };
   es.onerror = () => {
     es.close();
-    removeRunningTask(taskId);
   };
   return es;
-}
-
-// --- Create task card for each running task ---
-function createTaskCard(panelId, taskId, label) {
-  const panel = document.getElementById(panelId);
-  // 在表单 card 后面插入
-  const formCard = panel.querySelector('.card');
-  const card = document.createElement('div');
-  card.className = 'card';
-  card.id = 'task-card-' + taskId;
-  card.innerHTML = `
-    <h3 style="display:flex;justify-content:space-between;align-items:center">
-      <span>${label}</span>
-      <span style="font-size:11px;color:#888;font-weight:400">${taskId}</span>
-    </h3>
-    <div class="progress-area" id="log-${taskId}"></div>
-    <div id="live-table-area-${taskId}"></div>
-    <div id="result-area-${taskId}"></div>
-  `;
-  formCard.insertAdjacentElement('afterend', card);
-  return card;
-}
-
-// --- Log helper ---
-function appendLog(taskId, message, cls = '') {
-  const el = document.getElementById('log-' + taskId);
-  if (!el) return;
-  const line = document.createElement('div');
-  line.className = 'log-line ' + cls;
-  line.textContent = message;
-  el.appendChild(line);
-  el.scrollTop = el.scrollHeight;
 }
 
 // ========== CREATE ==========
@@ -1178,36 +1616,10 @@ async function startCreate() {
 
   if (resp.error) return alert(resp.error);
 
-  const taskId = resp.task_id;
-  createTaskCard('panel-create', taskId, '创建: ' + name);
-  addRunningTask(taskId);
-
-  connectSSE(
-    `/api/create/${taskId}/progress`, taskId,
-    (data) => {
-      if (data.type === 'status') appendLog(taskId, data.message, 'info');
-    },
-    (data) => {
-      if (data.status === 'completed') {
-        appendLog(taskId, '技能创建完成!', 'success');
-        loadSkillContent(name, taskId);
-      } else {
-        appendLog(taskId, '创建失败: ' + (data.error || ''), 'error');
-      }
-    }
-  );
-}
-
-async function loadSkillContent(name, taskId) {
-  const content = await fetch(`/api/skill-content/${name}`).then(r => r.text());
-  const area = document.getElementById('result-area-' + taskId);
-  area.innerHTML = `<div class="content-preview"><pre>${content.replace(/</g, '&lt;')}</pre></div>`;
-
-  // 刷新技能列表
-  const skills = await fetch('/api/skills').then(r => r.json());
-  fillSelect('manage-skill', skills);
-  fillSelect('eval-skill', skills);
-  fillSelect('evolve-skill', skills);
+  showToast('创建任务已提交 (ID: ' + resp.task_id + ')，可在 Tasks 查看', 'success');
+  // 切换到 Manage Tab 查看任务进度
+  document.querySelector('.tab[data-tab="manage"]').click();
+  refreshTasks();
 }
 
 // ========== EVAL ==========
@@ -1238,65 +1650,10 @@ async function startEval() {
 
   if (resp.error) return alert(resp.error);
 
-  const taskId = resp.task_id;
-  const card = createTaskCard('panel-eval', taskId, '评估: ' + skill);
-
-  // 添加 live table
-  const tableArea = document.getElementById('live-table-area-' + taskId);
-  tableArea.innerHTML = `<table class="result-table" id="live-table-${taskId}" style="display:none">
-    <thead><tr><th>测试点</th><th>Trial</th><th>得分</th><th>结果</th></tr></thead>
-    <tbody></tbody></table>`;
-
-  addRunningTask(taskId);
-
-  connectSSE(
-    `/api/eval/${taskId}/progress`, taskId,
-    (data) => {
-      if (data.type === 'status') {
-        appendLog(taskId, data.message, 'info');
-      } else if (data.type === 'test_cases') {
-        // 自动生成的测试用例回填到 textarea
-        document.getElementById('eval-tc-content').value = formatTestCases(data.data);
-      } else if (data.type === 'progress') {
-        const d = data.data;
-        const table = document.getElementById('live-table-' + taskId);
-        table.style.display = 'table';
-        const tbody = table.querySelector('tbody');
-        const row = document.createElement('tr');
-        row.innerHTML = `<td>${(d.test_point || '').substring(0, 40)}</td>
-          <td>${d.trial || ''}</td>
-          <td>${d.score != null ? d.score.toFixed(2) : ''}</td>
-          <td><span class="badge ${d.pass ? 'badge-pass' : 'badge-fail'}">${d.pass ? 'PASS' : 'FAIL'}</span></td>`;
-        tbody.appendChild(row);
-      }
-    },
-    (data) => {
-      if (data.status === 'completed') {
-        appendLog(taskId, '评估完成!', 'success');
-        showEvalResult(taskId, data.result);
-      } else {
-        appendLog(taskId, '评估失败: ' + (data.error || ''), 'error');
-      }
-    }
-  );
-}
-
-function showEvalResult(taskId, result) {
-  if (!result) return;
-  const area = document.getElementById('result-area-' + taskId);
-  area.innerHTML = `
-    <div class="summary-box">
-      <div class="metric"><div class="label">Overall Reward</div><div class="value">${(result.overall_reward || 0).toFixed(4)}</div></div>
-      <div class="metric"><div class="label">Total Cases</div><div class="value">${result.total_cases || 0}</div></div>
-      <div class="metric"><div class="label">Trials</div><div class="value">${result.trials || 0}</div></div>
-    </div>
-    <table class="result-table"><thead><tr><th>测试点</th><th>Pass Rate</th><th>Reward</th><th>耗时</th></tr></thead>
-    <tbody>${(result.test_cases || []).map(tc => `<tr>
-      <td>${(tc.test_point || '').substring(0, 50)}</td>
-      <td>${(tc.pass_rate || 0).toFixed(2)}</td>
-      <td>${(tc.reward || 0).toFixed(4)}</td>
-      <td>${(tc.time_total || 0).toFixed(1)}s</td></tr>`).join('')}
-    </tbody></table>`;
+  showToast('评估任务已提交 (ID: ' + resp.task_id + ')，可在 Tasks 查看', 'success');
+  // 切换到 Manage Tab 查看任务进度
+  document.querySelector('.tab[data-tab="manage"]').click();
+  refreshTasks();
 }
 
 // ========== EVOLVE ==========
@@ -1320,7 +1677,7 @@ async function startEvolve() {
     speed: document.getElementById('evolve-speed').value,
     threshold: parseFloat(document.getElementById('evolve-threshold').value),
     trials: parseInt(document.getElementById('evolve-trials').value),
-    parallel: 1,
+    parallel: parseInt(document.getElementById('evolve-parallel').value),
     ignore_cache: document.getElementById('evolve-ignore-cache').checked,
     debug: document.getElementById('evolve-debug').checked,
     save_trace: document.getElementById('evolve-save-trace').checked,
@@ -1335,135 +1692,35 @@ async function startEvolve() {
 
   if (resp.error) return alert(resp.error);
 
-  const taskId = resp.task_id;
-  const card = createTaskCard('panel-evolve', taskId, '演化: ' + skill);
-
-  // 添加 live table
-  const tableArea = document.getElementById('live-table-area-' + taskId);
-  tableArea.innerHTML = `<table class="result-table" id="live-table-${taskId}" style="display:none">
-    <thead><tr><th>轮次</th><th>策略</th><th>Base</th><th>Evolved</th><th>提升</th><th>结果</th></tr></thead>
-    <tbody></tbody></table>`;
-
-  addRunningTask(taskId);
-
-  connectSSE(
-    `/api/evolve/${taskId}/progress`, taskId,
-    (data) => {
-      if (data.type === 'status') {
-        appendLog(taskId, data.message, 'info');
-      } else if (data.type === 'iteration') {
-        const d = data.data;
-        const table = document.getElementById('live-table-' + taskId);
-        table.style.display = 'table';
-        const tbody = table.querySelector('tbody');
-        const row = document.createElement('tr');
-        const accepted = d.accepted;
-        const skipReason = d.skip_reason || '';
-        let badge = '';
-        if (skipReason) {
-          badge = `<span class="badge" style="background:#f5f5f5;color:#888">SKIP</span>`;
-        } else {
-          badge = `<span class="badge ${accepted ? 'badge-accepted' : 'badge-rejected'}">${accepted ? 'ACCEPTED' : 'REJECTED'}</span>`;
-        }
-        row.innerHTML = `<td>${d.iteration}</td>
-          <td>${(d.strategy || '').substring(0, 30)}</td>
-          <td>${(d.base_rate || 0).toFixed(4)}</td>
-          <td>${(d.evolved_rate || 0).toFixed(4)}</td>
-          <td>${(d.improvement || 0) >= 0 ? '+' : ''}${(d.improvement || 0).toFixed(4)}</td>
-          <td>${badge}</td>`;
-        tbody.appendChild(row);
-        appendLog(taskId, `轮次 ${d.iteration}: ${d.strategy || ''} — ${(d.evolved_rate||0).toFixed(4)} (${(d.improvement||0) >= 0 ? '+' : ''}${(d.improvement||0).toFixed(4)}) ${skipReason || (accepted ? '✓' : '✗')}`, accepted ? 'success' : (skipReason ? '' : 'info'));
-      }
-    },
-    (data) => {
-      if (data.status === 'completed') {
-        appendLog(taskId, '演化完成!', 'success');
-        showEvolveResult(taskId, data.result);
-      } else {
-        appendLog(taskId, '演化失败: ' + (data.error || ''), 'error');
-      }
-    }
-  );
+  showToast('演化任务已提交 (ID: ' + resp.task_id + ')，可在 Tasks 查看', 'success');
+  // 切换到 Manage Tab 查看任务进度
+  document.querySelector('.tab[data-tab="manage"]').click();
+  refreshTasks();
 }
 
-function showEvolveResult(taskId, result) {
-  if (!result) return;
-  const improvement = result.improvement || 0;
-  const area = document.getElementById('result-area-' + taskId);
-  area.innerHTML = `
-    <div class="summary-box">
-      <div class="metric"><div class="label">Baseline</div><div class="value">${(result.baseline_rate || 0).toFixed(4)}</div></div>
-      <div class="metric"><div class="label">Evolved</div><div class="value">${(result.evolved_rate || 0).toFixed(4)}</div></div>
-      <div class="metric"><div class="label">提升</div><div class="value" style="color:${improvement >= 0 ? '#2e7d32' : '#c62828'}">${improvement >= 0 ? '+' : ''}${improvement.toFixed(4)}</div></div>
-      <div class="metric"><div class="label">轮次</div><div class="value">${result.iterations_done || 0}</div></div>
-      <div class="metric"><div class="label">接受轮次</div><div class="value">${result.accepted_iterations || 0}</div></div>
-      <div class="metric"><div class="label">最优版本</div><div class="value">${result.best_iter > 0 ? 'iter-' + result.best_iter : 'baseline'}</div></div>
-    </div>
-    <div class="collapsible-card" style="margin-top:16px;border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px">
-      <h4 class="collapsible-header" onclick="toggleCollapse(this)" style="font-size:14px;margin:0">
-        版本浏览 <span class="collapse-arrow open">&#9662;</span>
-      </h4>
-      <div class="collapsible-body" id="version-browser-${taskId}">
-        <div style="display:flex;gap:12px;margin-top:12px;align-items:center;flex-wrap:wrap">
-          <div style="flex:1;min-width:150px">
-            <label style="font-size:12px;color:#888">对比源</label>
-            <select id="vdiff-from-${taskId}" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:12px"></select>
-          </div>
-          <div style="padding-top:16px;font-size:16px;color:#999">&#8594;</div>
-          <div style="flex:1;min-width:150px">
-            <label style="font-size:12px;color:#888">对比目标</label>
-            <select id="vdiff-to-${taskId}" style="width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:12px"></select>
-          </div>
-          <button class="btn btn-outline" style="margin-top:14px" onclick="loadEvolveDiff('${taskId}')">查看 Diff</button>
-        </div>
-        <div id="vdiff-result-${taskId}" style="margin-top:12px"></div>
-        <div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #eee;align-items:center;flex-wrap:wrap">
-          <label style="font-size:12px;color:#888">操作版本</label>
-          <select id="vaction-ver-${taskId}" style="padding:6px 8px;border:1px solid #ddd;border-radius:4px;font-size:12px"></select>
-          <button class="btn btn-outline" onclick="downloadEvolveVersion('${taskId}')">下载此版本</button>
-          <button class="btn btn-primary" style="font-size:12px" onclick="applyEvolveVersion('${taskId}')">应用此版本</button>
-        </div>
-      </div>
-    </div>`;
+async function initEvolveVersionUI(taskId) {
+  const info = window['_evolve_' + taskId];
+  if (!info || !info.skill || !info.runId) return;
 
-  // 加载版本列表
-  loadEvolveVersions(taskId, result);
-}
+  const versions = await fetch('/api/evolve-versions/' + encodeURIComponent(info.skill) + '/' + encodeURIComponent(info.runId)).then(r => r.json());
+  if (versions.error) {
+    console.warn('加载版本列表失败:', versions.error);
+    return;
+  }
 
-async function loadEvolveVersions(taskId, result) {
-  const skill = document.getElementById('evolve-skill').value;
-  // 从 result 中找 run_id：通过 results API 获取最新的 run
-  const runs = await fetch('/api/results').then(r => r.json());
-  const skillResult = runs.find(r => r.skill === skill);
-  if (!skillResult || !skillResult.evolve_runs.length) return;
+  const opts = versions.versions || [];
+  if (!opts.length) return;
 
-  // 用最新的 run
-  const runId = skillResult.evolve_runs[skillResult.evolve_runs.length - 1].id;
-  // 存储供后续使用
-  window['_evolve_' + taskId] = { skill, runId };
-
-  const data = await fetch('/api/evolve-versions/' + encodeURIComponent(skill) + '/' + encodeURIComponent(runId)).then(r => r.json());
-  if (data.error) return;
-
-  const versions = data.versions;
-  const bestId = (versions.find(v => v.best) || versions[0]).id;
-
-  // 填充 select
-  const opts = versions.map(v => {
-    const tag = v.best ? ' [BEST]' : (v.accepted ? ' [OK]' : '');
-    const skip = v.skip_reason ? ' [SKIP]' : '';
-    return `<option value="${v.id}">${v.label} (${(v.rate||0).toFixed(4)})${tag}${skip}</option>`;
-  }).join('');
+  // 填充下拉框选项
+  const htmlOpts = opts.map(v => `<option value="${v.id}">${v.label}${v.best ? ' (最优)' : ''}${v.accepted ? '' : ' (未采纳)'}</option>`).join('');
 
   const fromSel = document.getElementById('vdiff-from-' + taskId);
   const toSel = document.getElementById('vdiff-to-' + taskId);
-  const actSel = document.getElementById('vaction-ver-' + taskId);
-  if (fromSel) { fromSel.innerHTML = opts; fromSel.value = 'baseline'; }
-  if (toSel) { toSel.innerHTML = opts; toSel.value = bestId; }
-  if (actSel) { actSel.innerHTML = opts; actSel.value = bestId; }
+  const actionSel = document.getElementById('vaction-ver-' + taskId);
 
-  // 自动加载一次 diff
-  loadEvolveDiff(taskId);
+  if (fromSel) { fromSel.innerHTML = htmlOpts; fromSel.value = 'baseline'; }
+  if (toSel) { toSel.innerHTML = htmlOpts; toSel.value = opts[opts.length - 1]?.id || 'baseline'; }
+  if (actionSel) { actionSel.innerHTML = htmlOpts; actionSel.value = opts.find(v => v.best)?.id || 'baseline'; }
 }
 
 async function loadEvolveDiff(taskId) {
