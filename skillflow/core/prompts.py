@@ -283,10 +283,11 @@ EVOLVE_AUDIT_PROMPT = """\
 <<<END>>>
 
 注意：
-- 相对路径是相对于技能目录的路径，如 SKILL.md、scripts/helper.py、references/guide.md
+- 相对路径必须在同一行内，如 SKILL.md、scripts/helper.py、references/guide.md
 - 每个修改只输出被替换的片段，不要输出整个文件。未修改的部分不要输出
 - SEARCH 部分必须与原文件完全一致（逐字符匹配），否则替换会失败
 - 一个文件可以有多个 SEARCH/REPLACE 块，按从上到下的顺序排列
+- <<<END>>> 必须单独一行，与 <<<FILE:>>> 严格配对
 - 如果所有文件都不需要修改，只输出审视分析即可
 
 {speed_constraint}

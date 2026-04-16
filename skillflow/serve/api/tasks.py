@@ -110,7 +110,7 @@ def resume_task(task_id: str, request: Request):
 
 @router.post("/tasks/{task_id}/retry")
 def retry_task(task_id: str, request: Request):
-    """重试失败任务。"""
+    """重试失败或中断的任务。"""
     tm = request.app.state.task_manager
     try:
         status = tm.retry(task_id)

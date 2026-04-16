@@ -169,6 +169,7 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 .task-status-dot.failed { background: #f44336; }
 .task-status-dot.paused { background: #9e9e9e; }
 .task-status-dot.cancelled { background: #bdbdbd; }
+.task-status-dot.interrupted { background: #7b1fa2; }
 .task-info { flex: 1; }
 .task-info .type { font-size: 12px; color: #888; }
 .task-info .name { font-size: 14px; color: #333; font-weight: 500; }
@@ -840,7 +841,7 @@ function renderTasksList(tasks) {
   const typeLabels = { create: '创建', eval: '评估', evolve: '演化' };
   const statusLabels = {
     pending: '等待', queued: '排队', running: '运行', paused: '暂停',
-    completed: '完成', failed: '失败', cancelled: '已取消'
+    completed: '完成', failed: '失败', cancelled: '已取消', interrupted: '中断'
   };
 
   let html = '';
@@ -866,8 +867,8 @@ function renderTasksList(tasks) {
           ${t.status === 'running' ? `<button class="btn btn-sm btn-pause" onclick="pauseTask('${t.id}')">暂停</button>` : ''}
           ${t.status === 'paused' ? `<button class="btn btn-sm btn-resume" onclick="resumeTask('${t.id}')">恢复</button>` : ''}
           ${t.status === 'queued' || t.status === 'pending' ? `<button class="btn btn-sm btn-cancel" onclick="cancelTask('${t.id}')">取消</button>` : ''}
-          ${t.status === 'failed' ? `<button class="btn btn-sm btn-retry" onclick="retryTask('${t.id}')">重试</button>` : ''}
-          ${t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled' ? `<button class="btn btn-sm btn-delete" onclick="deleteTask('${t.id}')">删除</button>` : ''}
+          ${t.status === 'failed' || t.status === 'interrupted' ? `<button class="btn btn-sm btn-retry" onclick="retryTask('${t.id}')">重试</button>` : ''}
+          ${t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled' || t.status === 'interrupted' ? `<button class="btn btn-sm btn-delete" onclick="deleteTask('${t.id}')">删除</button>` : ''}
         </div>
       </div>
       <div class="task-detail" id="task-detail-${t.id}">
@@ -981,11 +982,18 @@ function formatEventMessage(ev) {
       return `[轮次 ${d.iteration}/${d.max_iterations}] 开始 ${d.mode || ''}模式, 当前最优=${d.best_rate != null ? d.best_rate.toFixed(4) : '-'}`;
     case 'iteration':
       const improveStr = d.improvement != null ? (d.improvement >= 0 ? '+' + d.improvement.toFixed(4) : d.improvement.toFixed(4)) : '-';
+      const skipInfo = d.skip_reason ? ` [跳过: ${d.skip_reason}]` : '';
+      const summaryInfo = d.summary ? ` (${d.summary.substring(0, 50)})` : '';
+      if (d.skip_reason) {
+        return `[轮次 ${d.iteration}] ${skipInfo}${summaryInfo}`;
+      }
       return `[轮次 ${d.iteration}] ${d.strategy || ''} rate=${d.evolved_rate != null ? d.evolved_rate.toFixed(4) : '-'} ${improveStr} ${d.accepted ? 'ACCEPTED' : 'REJECTED'}`;
     case 'test_cases':
       return `[测试用例] ${d.count || ''} 个`;
     case 'done':
-      return `[完成] ${d.status || ''}`;
+      const stopDetail = d.stop_detail || d.stop_reason || '';
+      const improvementInfo = d.improvement != null ? ` 提升=${d.improvement >= 0 ? '+' + d.improvement.toFixed(4) : d.improvement.toFixed(4)}` : '';
+      return `[完成] ${d.status || ''}${stopDetail ? ' - ' + stopDetail : ''}${improvementInfo}`;
     default:
       return JSON.stringify(d);
   }
@@ -1408,18 +1416,23 @@ async function generateEvalTestCases() {
   connectSSE(
     '/api/test-cases/' + encodeURIComponent(skill) + '/generate/' + resp.task_id + '/progress',
     null,
-    (data) => {
-      if (data.type === 'status') {
-        btn.textContent = data.message;
+    (ev) => {
+      // ev 格式: {seq, type, data, time}
+      if (ev.type === 'status') {
+        btn.textContent = ev.data.message || '生成中...';
+      } else if (ev.type === 'test_cases') {
+        btn.textContent = '生成 ' + (ev.data.count || 0) + ' 个用例';
       }
     },
-    (data) => {
+    (ev) => {
       btn.disabled = false;
       btn.textContent = '生成测试用例';
-      if (data.status === 'completed' && data.result && data.result.test_cases) {
-        document.getElementById('eval-tc-content').value = formatTestCases(data.result.test_cases);
+      if (ev.data && ev.data.status === 'completed' && ev.data.test_cases) {
+        document.getElementById('eval-tc-content').value = formatTestCases(ev.data.test_cases);
         _evalTcEdited = true;
         _evalTcCurrentName = '';
+      } else if (ev.data && ev.data.error) {
+        alert('生成失败: ' + ev.data.error);
       }
     }
   );
@@ -1442,12 +1455,13 @@ function onEvolveTcModeChange() {}
 function connectSSE(url, taskId, onEvent, onDone) {
   const es = new EventSource(url);
   es.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'done') {
+    const ev = JSON.parse(e.data);
+    // ev 格式: {seq, type, data, time}
+    if (ev.type === 'done') {
       es.close();
-      if (onDone) onDone(data);
+      if (onDone) onDone(ev);
     } else {
-      if (onEvent) onEvent(data);
+      if (onEvent) onEvent(ev);
     }
   };
   es.onerror = () => {

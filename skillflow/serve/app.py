@@ -46,33 +46,18 @@ def create_app() -> FastAPI:
     # 静态文件（index.html）
     app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")
 
-    # 启动时恢复中断的任务
+    # 启动时处理中断的任务（不自动恢复）
     @app.on_event("startup")
-    async def recover_tasks():
-        """恢复服务停止时的运行任务。"""
-        # 将所有 running 状态改为 paused
-        running_tasks = store.list(status="running")
-        for task in running_tasks:
-            store.update_status(task.id, "paused")
-
-        # 统计 paused 任务
-        paused_tasks = store.list(status="paused")
-
-        if not paused_tasks:
-            return
-
-        # 按创建时间排序，恢复最早的任务
-        paused_tasks.sort(key=lambda t: t.created_at)
-
-        # 只恢复不超过并发限制的任务
-        for task in paused_tasks[:task_manager.MAX_CONCURRENT_TASKS]:
-            # 检查技能冲突
-            if task.skill:
-                running_for_skill = store.get_running_for_skill(task.skill)
-                if running_for_skill and running_for_skill.id != task.id:
-                    continue  # 同技能已有任务恢复，跳过
-
-            # 恢复执行
-            task_manager.submit(task.id)
+    async def handle_interrupted_tasks():
+        """处理服务停止时的未完成任务，标记为中断状态。"""
+        # 将所有 running/queued/paused 状态改为 interrupted
+        for status in ("running", "queued", "paused"):
+            tasks = store.list(status=status)
+            for task in tasks:
+                store.update_status(
+                    task.id,
+                    "interrupted",
+                    error="服务重启导致任务中断，请点击重试继续执行",
+                )
 
     return app

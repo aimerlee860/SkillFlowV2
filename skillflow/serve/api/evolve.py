@@ -221,7 +221,7 @@ def list_evolve_versions(skill_name: str, run_id: str):
 @router.get("/evolve-diff/{skill_name}/{run_id}", response_class=PlainTextResponse)
 def get_evolve_diff(skill_name: str, run_id: str, frm: str = "baseline", to: str = ""):
     """返回两个版本之间的 unified diff。"""
-    from ..evolve.guards import build_diff_text, snapshot_files
+    from ...evolve.guards import build_diff_text, snapshot_files
 
     if not to:
         return PlainTextResponse("缺少 to 参数", status_code=400)

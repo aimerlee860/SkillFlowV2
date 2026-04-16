@@ -158,7 +158,7 @@ class TaskExecutor:
 
         # 恢复模式：从 log 文件继续
         if recovery and log_file.exists():
-            return self._resume_evolve(skill_path, output_dir, log_file, params)
+            return self._resume_evolve(task, skill_path, output_dir, log_file, params)
 
         # 创建进度回调
         def _evolve_progress(event_type: str, data: dict) -> None:
@@ -189,6 +189,19 @@ class TaskExecutor:
         )
         # 添加 run_id 用于版本管理 UI
         result["run_id"] = timestamp
+
+        # 发送终止原因事件
+        self._emit(task.id, "done", {
+            "status": result.get("status", "completed"),
+            "stop_reason": result.get("stop_reason", ""),
+            "stop_detail": result.get("stop_detail", ""),
+            "baseline_rate": result.get("baseline_rate", 0),
+            "evolved_rate": result.get("evolved_rate", 0),
+            "improvement": result.get("improvement", 0),
+            "iterations_done": result.get("iterations_done", 0),
+            "best_iter": result.get("best_iter", 0),
+        })
+
         return result
 
     def _resume_evolve(
@@ -501,6 +514,18 @@ class TaskExecutor:
         console.rule("[bold green]演化结束[/bold green]")
         console.print(f"[green]最优 Reward: {best_rate:.4f}[/green]")
         console.print(f"[green]总提升: {final_improvement:+.4f}[/green]")
+
+        # 发送终止原因事件
+        self._emit(task.id, "done", {
+            "status": final_log.get("status", "completed"),
+            "stop_reason": final_log.get("stop_reason", ""),
+            "stop_detail": final_log.get("stop_detail", ""),
+            "baseline_rate": final_log.get("baseline_rate", 0),
+            "evolved_rate": final_log.get("evolved_rate", 0),
+            "improvement": final_log.get("improvement", 0),
+            "iterations_done": final_log.get("iterations_done", 0),
+            "best_iter": final_log.get("best_iter", 0),
+        })
 
         return final_log
 

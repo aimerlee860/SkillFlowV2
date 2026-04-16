@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
@@ -215,39 +216,39 @@ def generate_test_cases_api(skill_name: str, req: GenerateTestCasesRequest, requ
     if req.spec:
         spec_path = str(_CWD / "specs" / req.spec)
 
-    task = tm.create_task("generate_test_cases")
+    # 创建任务
+    params = {
+        "skill_path": str(skill_path),
+        "spec_path": spec_path,
+        "ignore_cache": req.ignore_cache,
+    }
+    task = tm.create_task("generate_test_cases", skill=skill_name, params=params)
 
-    def _run():
+    # 提交执行（自定义 executor）
+    def _executor_func(task_record):
         from ...eval.test_generator import generate_test_cases
+        import tempfile
 
+        tm.emit_progress(task_record.id, "status", {"message": "生成中..."})
         try:
-            task.progress_events.append(
-                {"type": "status", "message": "Generating test cases..."}
-            )
-            import tempfile
             test_cases, _ = generate_test_cases(
                 skill_path=skill_path,
                 spec_path=spec_path,
                 output_dir=tempfile.mkdtemp(),
                 ignore_cache=req.ignore_cache,
             )
-            task.result = {"test_cases": test_cases, "count": len(test_cases)}
-            task.status = "completed"
-            task.progress_events.append(
-                {"type": "done", "status": "completed", "result": task.result}
-            )
+            # done 事件中包含完整结果，方便前端一次性获取
+            tm.emit_progress(task_record.id, "done", {
+                "status": "completed",
+                "test_cases": test_cases,
+                "count": len(test_cases)
+            })
+            return {"test_cases": test_cases, "count": len(test_cases)}
         except Exception as e:
-            task.status = "failed"
-            task.error = str(e)
-            task.progress_events.append(
-                {"type": "done", "status": "failed", "error": str(e)}
-            )
+            tm.emit_progress(task_record.id, "done", {"status": "failed", "error": str(e)})
+            raise
 
-    task.progress_events.append(
-        {"type": "status", "message": "Starting test case generation..."}
-    )
-    task.status = "running"
-    tm._executor.submit(_run)
+    tm.submit(task.id, executor_func=_executor_func)
 
     return {"task_id": task.id, "status": "running"}
 
@@ -260,16 +261,22 @@ async def generate_tc_progress(task_id: str, request: Request):
         return {"error": "task not found"}
 
     async def _stream():
-        last_idx = 0
-        while task.status in ("pending", "running"):
-            while last_idx < len(task.progress_events):
-                yield {"data": json.dumps(task.progress_events[last_idx])}
-                last_idx += 1
-            import asyncio
+        last_seq = -1
+        current_task = task
+        while current_task.status in ("pending", "running"):
+            events = tm.get_progress_events(task_id, after_seq=last_seq)
+            for ev in events:
+                yield {"data": json.dumps(ev)}
+                last_seq = ev["seq"]
             await asyncio.sleep(0.5)
-        while last_idx < len(task.progress_events):
-            yield {"data": json.dumps(task.progress_events[last_idx])}
-            last_idx += 1
+            current_task = tm.get_task(task_id)
+            if not current_task:
+                break
+
+        # 发送剩余事件
+        events = tm.get_progress_events(task_id, after_seq=last_seq)
+        for ev in events:
+            yield {"data": json.dumps(ev)}
 
     from sse_starlette.sse import EventSourceResponse
     return EventSourceResponse(_stream())

@@ -77,19 +77,25 @@ def _parse_audit_output(text: str) -> tuple[str, dict[str, str]]:
     Returns:
         (analysis_text, {relative_path: new_content})
     """
-    pattern = r"<<<FILE:(.+?)>>>\n(.*?)<<<END>>>"
+    # 文件名不能包含换行符，使用 [^\n]+ 精确匹配
+    pattern = r"<<<FILE:([^\n]+)>>>[ \t]*\n(.*?)<<<END>>>"
     matches = re.findall(pattern, text, re.DOTALL)
 
     if not matches:
         return text, {}
 
-    first_marker_pos = text.index("<<<FILE:")
+    first_marker_pos = text.find("<<<FILE:")
     analysis = text[:first_marker_pos].strip()
 
     modified_files = {}
     for file_path, block in matches:
         block = _clean_markdown_wrapping(block)
         rel_path = file_path.strip()
+
+        # 文件名长度校验，跳过异常长的路径（可能是解析错误）
+        if len(rel_path) > 255:
+            console.print(f"[yellow]跳过异常路径: {rel_path[:50]}...[/yellow]")
+            continue
 
         # 检测是否为 SEARCH/REPLACE 格式
         sr_pattern = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
@@ -158,7 +164,23 @@ def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str 
     analysis, modified_files = _parse_audit_output(text)
 
     for rel_path, content in modified_files.items():
+        # 安全检查：路径穿越和长度限制
+        if ".." in rel_path or rel_path.startswith("/"):
+            console.print(f"[yellow]跳过非法路径: {rel_path}[/yellow]")
+            continue
+
         file_path = skill_path / rel_path
+
+        # 检查最终路径是否仍在 skill_path 内
+        try:
+            resolved = file_path.resolve()
+            if not str(resolved).startswith(str(skill_path.resolve())):
+                console.print(f"[yellow]跳过路径穿越: {rel_path}[/yellow]")
+                continue
+        except OSError:
+            console.print(f"[yellow]跳过异常路径: {rel_path}[/yellow]")
+            continue
+
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # 检查是否为未处理的 SEARCH/REPLACE 块

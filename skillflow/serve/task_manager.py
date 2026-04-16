@@ -212,10 +212,10 @@ class TaskManager:
         return False
 
     def retry(self, task_id: str) -> str:
-        """重试失败任务。"""
+        """重试失败或中断的任务。"""
         task = self.store.load(task_id)
-        if not task or task.status != "failed":
-            raise ValueError(f"Task not failed: {task_id}")
+        if not task or task.status not in ("failed", "interrupted"):
+            raise ValueError(f"Task not failed/interrupted: {task_id}")
         self.store.update_status(task_id, "pending")
         return self.submit(task_id)
 
@@ -224,8 +224,8 @@ class TaskManager:
         task = self.store.load(task_id)
         if not task:
             return False
-        # 只允许删除已完成/失败/取消的任务
-        if task.status not in ("completed", "failed", "cancelled"):
+        # 只允许删除已完成/失败/取消/中断的任务
+        if task.status not in ("completed", "failed", "cancelled", "interrupted"):
             return False
         return self.store.delete(task_id)
 
