@@ -162,7 +162,11 @@ def _resolve_skill_dir(skill_name: str, run_id: str, version: str) -> Path | Non
     else:
         for d in run_dir.iterdir():
             if d.is_dir() and d.name == version:
-                skill_dirs = [c for c in d.iterdir() if c.is_dir()]
+                # 过滤掉 trace 目录，只返回技能目录
+                skill_dirs = [
+                    c for c in d.iterdir()
+                    if c.is_dir() and c.name != "trace"
+                ]
                 return skill_dirs[0] if skill_dirs else None
     return None
 

@@ -870,7 +870,7 @@ function renderTasksList(tasks) {
           ${t.status === 'paused' ? `<button class="btn btn-sm btn-resume" onclick="resumeTask('${t.id}')">恢复</button>` : ''}
           ${t.status === 'queued' || t.status === 'pending' ? `<button class="btn btn-sm btn-cancel" onclick="cancelTask('${t.id}')">取消</button>` : ''}
           ${t.status === 'failed' || t.status === 'interrupted' ? `<button class="btn btn-sm btn-retry" onclick="retryTask('${t.id}')">重试</button>` : ''}
-          ${(t.task_type === 'eval' || t.task_type === 'evolve') && (t.status === 'completed' || t.status === 'failed' || t.status === 'interrupted') ? `<button class="btn btn-sm btn-download" onclick="downloadTaskResults('${t.id}')">下载</button>` : ''}
+          ${(t.task_type === 'eval' || t.task_type === 'evolve') && (t.status === 'completed' || t.status === 'failed' || t.status === 'interrupted') ? `<button class="btn btn-sm btn-download" onclick="downloadTaskResults('${t.id}')">下载日志</button>` : ''}
           ${t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled' || t.status === 'interrupted' ? `<button class="btn btn-sm btn-delete" onclick="deleteTask('${t.id}')">删除</button>` : ''}
         </div>
       </div>
