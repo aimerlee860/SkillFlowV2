@@ -144,7 +144,8 @@ class TaskExecutor:
         if partial_result:
             result = self._merge_eval_results(partial_result, result)
 
-        return result
+        # 过滤掉不可 JSON 序列化的字段（轨迹已单独保存）
+        return {k: v for k, v in result.items() if k != "_traces"}
 
     def _execute_evolve(self, task: TaskRecord, recovery: bool) -> dict:
         """执行技能演化。"""
