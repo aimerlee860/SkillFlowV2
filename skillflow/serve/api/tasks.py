@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
+import zipfile
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Request, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -196,3 +199,50 @@ def get_task_log(task_id: str, request: Request):
         return {"error": "no result yet"}
 
     return {"error": "unknown task type"}
+
+
+@router.get("/tasks/{task_id}/download")
+def download_task_results(task_id: str, request: Request):
+    """下载任务结果目录为 zip 文件。"""
+    tm = request.app.state.task_manager
+    task = tm.get_task(task_id)
+    if not task:
+        return {"error": "task not found"}
+
+    if task.task_type not in ("eval", "evolve"):
+        return {"error": "仅支持下载 eval/evolve 任务结果"}
+
+    if not task.output_dir:
+        return {"error": "任务未设置输出目录"}
+
+    output_dir = Path(task.output_dir)
+
+    # 确定 actual_path（处理 evolve 的 timestamp 子目录）
+    if task.task_type == "evolve" and task.result and task.result.get("run_id"):
+        actual_path = output_dir / task.result["run_id"]
+    else:
+        actual_path = output_dir
+
+    if not actual_path.exists():
+        return {"error": "任务结果目录不存在，可能任务尚未开始或执行失败"}
+
+    # 打包为 zip
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(actual_path.rglob("*")):
+            if not f.is_file() or f.name.startswith("."):
+                continue
+            arcname = f.relative_to(actual_path)
+            zf.write(f, arcname)
+    buf.seek(0)
+
+    # 生成文件名
+    skill_name = task.skill or "unknown"
+    timestamp = actual_path.name if task.task_type == "evolve" else output_dir.name
+    filename = f"{skill_name}-{task.task_type}-{timestamp}.zip"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

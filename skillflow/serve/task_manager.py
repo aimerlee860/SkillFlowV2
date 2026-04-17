@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
 import uuid
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Lock
 from typing import Callable, Optional
 
@@ -220,13 +222,35 @@ class TaskManager:
         return self.submit(task_id)
 
     def delete(self, task_id: str) -> bool:
-        """删除任务（仅允许删除已结束的任务）。"""
+        """删除任务及其关联的结果目录。"""
         task = self.store.load(task_id)
         if not task:
             return False
         # 只允许删除已完成/失败/取消/中断的任务
         if task.status not in ("completed", "failed", "cancelled", "interrupted"):
             return False
+
+        # 删除关联的结果目录
+        if task.output_dir:
+            output_path = Path(task.output_dir)
+            # 安全检查：确保路径在 results/ 下，防止误删其他目录
+            cwd = Path.cwd()
+            results_dir = cwd / "results"
+            try:
+                resolved_base = output_path.resolve()
+                if str(resolved_base).startswith(str(results_dir.resolve())):
+                    # eval 任务: output_dir 已包含 timestamp，直接删除
+                    # evolve 任务: output_dir 是父目录，需要从 result.run_id 获取 timestamp
+                    if task.task_type == "evolve" and task.result and task.result.get("run_id"):
+                        actual_path = resolved_base / task.result["run_id"]
+                    else:
+                        actual_path = resolved_base
+
+                    if actual_path.exists() and actual_path.is_dir():
+                        shutil.rmtree(actual_path)
+            except Exception:
+                pass  # 目录删除失败不影响任务删除
+
         return self.store.delete(task_id)
 
     def get_task(self, task_id: str) -> Optional[TaskRecord]:
