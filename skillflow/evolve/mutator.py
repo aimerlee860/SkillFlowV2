@@ -311,21 +311,30 @@ def mutate_skill(
     # 记录修改前的 SKILL.md 用于判断 reflect/exploit 是否有实际改动
     skill_before_audit = load_text(skill_path / "SKILL.md") if (skill_path / "SKILL.md").exists() else ""
 
+    # 范例提取（提前到 audit 之前，以便注入 trace_context）
+    exemplars = []
+    if eval_result and eval_result.get("test_cases"):
+        traces_by_case = eval_result.get("_traces")
+        exemplars = extract_exemplars(eval_result["test_cases"], traces_by_case=traces_by_case)
+        if exemplars:
+            console.print(f"[green]提取到 {len(exemplars)} 个高方差范例[/green]")
+
+    # 将范例合并进 trace_context，确保 audit 分支也能利用
+    if exemplars:
+        exemplar_context = format_exemplars_section(exemplars)
+        if trace_context:
+            trace_context = f"{trace_context}\n\n## 高方差范例启发\n{exemplar_context}"
+        else:
+            trace_context = f"## 高方差范例启发\n{exemplar_context}"
+
     # 分支 1：审视（必执行）
     audit_analysis = audit_skill(skill_path, trace_context=trace_context, past_strategies=past_strategies, speed=speed)
     combined = f"## 审视分析\n{audit_analysis}"
     strategy = "audit"
 
-    # 范例提取（独立于 reflect，需要完整 eval_result）
-    exemplars = []
-    if eval_result and eval_result.get("test_cases"):
-        exemplars = extract_exemplars(eval_result["test_cases"])
-        if exemplars:
-            console.print(f"[green]提取到 {len(exemplars)} 个优质范例[/green]")
-
     # 分支 2：反思（有失败用例时执行，在审视结果上继续改写 SKILL.md）
     if failed_cases:
-        exemplars_section = format_exemplars_section(exemplars) if exemplars else "（无近阈值范例）"
+        exemplars_section = format_exemplars_section(exemplars) if exemplars else "（无高方差范例）"
         exemplars_instruction = format_exemplars_instruction(exemplars) if exemplars else ""
 
         skill_content = load_text(skill_path / "SKILL.md")
@@ -350,6 +359,8 @@ def mutate_skill(
 
         if exemplars:
             strategy = "audit+reflect+exploit"
+    elif exemplars:
+        strategy = "audit+exploit"
 
     # 判断是否有文件被修改
     skill_after = load_text(skill_path / "SKILL.md") if (skill_path / "SKILL.md").exists() else ""

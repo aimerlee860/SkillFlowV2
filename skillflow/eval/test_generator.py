@@ -12,7 +12,6 @@ from rich.console import Console
 from ..core.llm import get_llm
 from ..core.prompts import (
     TEST_CASE_CRITIC_PROMPT,
-    TEST_CASE_FIX_PROMPT,
     TEST_CASE_GEN_PROMPT,
     TEST_CASE_REVISE_PROMPT,
 )
@@ -95,45 +94,15 @@ def _call_llm_json(prompt: str) -> dict:
     return _extract_json(response_text)
 
 
-def _format_validation_errors(errors: list[str]) -> str:
-    """将校验错误列表格式化为文本。"""
-    return "\n".join(f"- {e}" for e in errors)
-
-
-# --- 带重试的格式校验关卡 ---
-
-def _validate_and_fix(
-    test_cases_data: dict,
-    skill_content: str,
-    max_retries: int = 3,
-) -> dict:
-    """格式校验关卡：校验不通过则让 LLM 修复，最多重试 max_retries 次。"""
+def _validate_or_raise(test_cases_data: dict) -> dict:
+    """格式校验：不通过则直接抛异常，由上游重试生成。"""
     test_cases = test_cases_data.get("test_cases", [])
-
-    for attempt in range(max_retries + 1):
-        errors = _validate_test_cases(test_cases)
-        if not errors:
-            return {"test_cases": test_cases}
-
-        if attempt < max_retries:
-            console.print(f"[yellow]格式校验发现 {len(errors)} 个问题，修复中 ({attempt + 1}/{max_retries})[/yellow]")
-            prompt = TEST_CASE_FIX_PROMPT.format(
-                errors=_format_validation_errors(errors),
-                test_cases_json=json.dumps({"test_cases": test_cases}, ensure_ascii=False, indent=2),
-            )
-            try:
-                test_cases_data = _call_llm_json(prompt)
-                test_cases = test_cases_data.get("test_cases", [])
-            except ValueError as e:
-                console.print(f"[yellow]修复调用失败: {e}, 重试...[/yellow]")
-                continue
-        else:
-            raise ValueError(
-                f"格式校验重试 {max_retries} 次后仍有问题:\n"
-                + _format_validation_errors(errors)
-            )
-
-    return {"test_cases": test_cases}  # pragma: no cover
+    errors = _validate_test_cases(test_cases)
+    if errors:
+        raise ValueError(
+            "格式校验失败:\n" + "\n".join(f"- {e}" for e in errors)
+        )
+    return {"test_cases": test_cases}
 
 
 # --- Critic 校验 ---
@@ -211,14 +180,10 @@ def generate_test_cases(
             data = load_json(cache_file)
             return data["test_cases"], filename
 
-    # 阶段 1: LLM 生成
+    # 阶段 1: LLM 生成（含格式校验）
     console.print("[blue]使用 LLM 生成测试用例...[/blue]")
     test_cases_data = _generate_initial(input_content, max_retries)
-
-    # 阶段 2: 第一道格式校验
-    console.print("[blue]格式校验...[/blue]")
-    test_cases_data = _validate_and_fix(test_cases_data, input_content)
-    console.print(f"[green]格式校验通过，共 {len(test_cases_data['test_cases'])} 个用例[/green]")
+    console.print(f"[green]生成并校验通过，共 {len(test_cases_data['test_cases'])} 个用例[/green]")
 
     # 阶段 3: Critic 校验 + 修订
     if enable_critic and test_cases_data["test_cases"]:
@@ -233,7 +198,7 @@ def generate_test_cases(
 
             # 阶段 4: 第二道格式校验
             console.print("[blue]修订后格式校验...[/blue]")
-            test_cases_data = _validate_and_fix(revised_data, input_content)
+            test_cases_data = _validate_or_raise(revised_data)
             console.print(f"[green]最终用例数: {len(test_cases_data['test_cases'])}[/green]")
         else:
             console.print("[green]Critic 校验通过，无需修订[/green]")
@@ -248,7 +213,7 @@ def generate_test_cases(
 
 
 def _generate_initial(input_content: str, max_retries: int) -> dict:
-    """初始生成测试用例，带 JSON 解析重试。"""
+    """初始生成测试用例，JSON 解析或格式校验失败时重试。"""
     prompt = TEST_CASE_GEN_PROMPT.format(skill_content=input_content)
 
     for attempt in range(max_retries + 1):
@@ -256,12 +221,12 @@ def _generate_initial(input_content: str, max_retries: int) -> dict:
             result = _call_llm_json(prompt)
             if "test_cases" not in result:
                 raise ValueError("响应中缺少 test_cases 字段")
-            return result
+            return _validate_or_raise(result)
         except ValueError as e:
             if attempt < max_retries:
-                console.print(f"[yellow]JSON 解析失败，重试 {attempt + 1}/{max_retries}[/yellow]")
+                console.print(f"[yellow]生成失败，重试 {attempt + 1}/{max_retries}[/yellow]")
                 console.print(f"[dim]错误: {e}[/dim]")
-                retry_prompt = f"""上一次生成的 JSON 格式有问题，请重新生成。
+                retry_prompt = f"""上一次生成的测试用例存在问题，请重新生成。
 错误信息: {str(e)[:200]}
 
 请严格按照以下格式输出，确保 JSON 完整且有效：

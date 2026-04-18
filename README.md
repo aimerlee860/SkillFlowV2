@@ -322,7 +322,7 @@ skillflow/
 │   ├── mutator.py         # Skill 变异（审视-反思-重写）
 │   ├── orchestrator.py    # 多轮进化编排（早停、历史策略）
 │   ├── guards.py          # 演化防护（回归检测、改动筛选）
-│   ├── exemplar.py        # 范例提取（近阈值失败响应）
+│   ├── exemplar.py        # 范例提取（高方差 trial 对比启发）
 │   └── cli.py             # CLI 命令
 └── __main__.py            # 入口点
 ```
