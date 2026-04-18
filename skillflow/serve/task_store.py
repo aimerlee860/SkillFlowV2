@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import threading
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional, Any
@@ -39,6 +40,7 @@ class TaskStore:
 
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = db_path
+        self._event_lock = threading.Lock()
         self._init_db()
 
     def _init_db(self) -> None:
@@ -202,15 +204,16 @@ class TaskStore:
     def append_event(self, task_id: str, event_type: str, event_data: dict) -> None:
         """追加进度事件。"""
         now = time.time()
-        with sqlite3.connect(self.db_path) as conn:
-            seq = conn.execute(
-                "SELECT COALESCE(MAX(seq), -1) + 1 FROM progress_events WHERE task_id = ?",
-                (task_id,)
-            ).fetchone()[0]
-            conn.execute("""
-                INSERT INTO progress_events (task_id, seq, event_type, event_data, created_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (task_id, seq, event_type, json.dumps(event_data, ensure_ascii=False), now))
+        with self._event_lock:
+            with sqlite3.connect(self.db_path) as conn:
+                seq = conn.execute(
+                    "SELECT COALESCE(MAX(seq), -1) + 1 FROM progress_events WHERE task_id = ?",
+                    (task_id,)
+                ).fetchone()[0]
+                conn.execute("""
+                    INSERT INTO progress_events (task_id, seq, event_type, event_data, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (task_id, seq, event_type, json.dumps(event_data, ensure_ascii=False), now))
 
     def get_events(self, task_id: str, after_seq: int = -1) -> list[dict]:
         """获取进度事件（用于 SSE 流恢复）。"""

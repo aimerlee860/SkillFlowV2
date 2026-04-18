@@ -403,7 +403,7 @@ reference: []</textarea>
         <select id="eval-tc-select" onchange="onEvalTcSelect()"><option value="">-- 选择已保存的测试用例 --</option></select>
       </div>
       <div class="tc-area">
-        <textarea id="eval-tc-content" placeholder="点击「生成测试用例」自动生成，或选择已保存的测试用例，也可手动编辑 JSON&#10;&#10;格式: [{&quot;test_point&quot;: &quot;...&quot;, &quot;question&quot;: &quot;...&quot;}]" oninput="onEvalTcEdit()"></textarea>
+        <textarea id="eval-tc-content" placeholder="点击「生成测试用例」自动生成，或选择已保存的测试用例，也可手动编辑 JSON&#10;&#10;格式: [{&quot;test_point&quot;: &quot;...&quot;, &quot;question&quot;: &quot;...&quot;, &quot;checkpoints&quot;: [&quot;要点1&quot;, &quot;要点2&quot;]}]" oninput="onEvalTcEdit()"></textarea>
       </div>
       <div class="form-row">
         <label>Trials</label>
@@ -760,6 +760,10 @@ document.querySelectorAll('.tab').forEach(tab => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+    // 切到 eval tab 时检查是否有待恢复的生成结果
+    if (tab.dataset.tab === 'eval') {
+      _checkPendingGenResult();
+    }
   });
 });
 
@@ -840,7 +844,7 @@ function renderTasksList(tasks) {
     return;
   }
 
-  const typeLabels = { create: '创建', eval: '评估', evolve: '演化' };
+  const typeLabels = { create: '创建', eval: '评估', evolve: '演化', generate_test_cases: '生成用例' };
   const statusLabels = {
     pending: '等待', queued: '排队', running: '运行', paused: '暂停',
     completed: '完成', failed: '失败', cancelled: '已取消', interrupted: '中断'
@@ -872,6 +876,7 @@ function renderTasksList(tasks) {
           ${t.status === 'failed' || t.status === 'interrupted' ? `<button class="btn btn-sm btn-retry" onclick="retryTask('${t.id}')">重试</button>` : ''}
           ${(t.task_type === 'eval' || t.task_type === 'evolve') && (t.status === 'completed' || t.status === 'failed' || t.status === 'interrupted') ? `<button class="btn btn-sm btn-download" onclick="downloadTaskResults('${t.id}')">下载日志</button>` : ''}
           ${t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled' || t.status === 'interrupted' ? `<button class="btn btn-sm btn-delete" onclick="deleteTask('${t.id}')">删除</button>` : ''}
+          ${t.task_type === 'generate_test_cases' && t.status === 'completed' ? `<button class="btn btn-sm btn-outline" onclick="loadGenTcToEval('${t.id}')">用例预览</button>` : ''}
         </div>
       </div>
       <div class="task-detail" id="task-detail-${t.id}">
@@ -1051,8 +1056,11 @@ function formatTaskResult(task) {
       <div class="metric"><div class="label">Trials</div><div class="value">${r.trials || 0}</div></div>
     </div>`;
     if (r.test_cases && r.test_cases.length) {
-      html += `<table class="result-table"><thead><tr><th>测试点</th><th>Pass Rate</th><th>Reward</th></tr></thead>
-        <tbody>${r.test_cases.map(tc => `<tr><td>${(tc.test_point || '').substring(0, 40)}</td><td>${(tc.pass_rate || 0).toFixed(2)}</td><td>${(tc.reward || 0).toFixed(4)}</td></tr>`).join('')}</tbody></table>`;
+      html += `<table class="result-table"><thead><tr><th>测试点</th><th>评估要点</th><th>Pass Rate</th><th>Reward</th></tr></thead>
+        <tbody>${r.test_cases.map(tc => {
+          const cps = (tc.checkpoints || []).map(cp => '• ' + cp).join('<br>');
+          return `<tr><td>${(tc.test_point || '').substring(0, 40)}</td><td style="font-size:0.85em;color:#888">${cps || '-'}</td><td>${(tc.pass_rate || 0).toFixed(2)}</td><td>${(tc.reward || 0).toFixed(4)}</td></tr>`;
+        }).join('')}</tbody></table>`;
     }
     return html;
   } else if (task.task_type === 'evolve') {
@@ -1313,6 +1321,8 @@ function downloadSkill() {
 // --- Test cases management ---
 let _evalTcEdited = false;
 let _evalTcCurrentName = ''; // 当前加载的测试用例名称
+let _pendingGenTaskId = null; // 正在生成的任务 ID
+let _pendingGenSkill = null; // 正在生成的技能名
 
 function formatTestCases(tcList) {
   if (!tcList) return '';
@@ -1439,6 +1449,9 @@ async function generateEvalTestCases() {
     return;
   }
 
+  _pendingGenTaskId = resp.task_id;
+  _pendingGenSkill = skill;
+
   connectSSE(
     '/api/test-cases/' + encodeURIComponent(skill) + '/generate/' + resp.task_id + '/progress',
     null,
@@ -1453,6 +1466,8 @@ async function generateEvalTestCases() {
     (ev) => {
       btn.disabled = false;
       btn.textContent = '生成测试用例';
+      _pendingGenTaskId = null;
+      _pendingGenSkill = null;
       if (ev.data && ev.data.status === 'completed' && ev.data.test_cases) {
         document.getElementById('eval-tc-content').value = formatTestCases(ev.data.test_cases);
         _evalTcEdited = true;
@@ -1476,6 +1491,71 @@ async function onEvolveSkillChange() {
 }
 
 function onEvolveTcModeChange() {}
+
+// --- Generate test cases recovery ---
+
+// 从任务列表点击「用例预览」
+async function loadGenTcToEval(taskId) {
+  const resp = await fetch('/api/tasks/' + taskId).then(r => r.json());
+  const task = resp.task;
+  if (!task || !task.result || !task.result.test_cases) {
+    showToast('未找到生成的测试用例', 'error');
+    return;
+  }
+  // 切到 eval tab
+  document.querySelector('.tab[data-tab="eval"]').click();
+  // 确保选中对应的 skill
+  const skill = task.skill;
+  if (skill) {
+    document.getElementById('eval-skill').value = skill;
+    // 刷新测试用例下拉框
+    const items = await listTestCases(skill);
+    fillTcSelect('eval-tc-select', items);
+  }
+  // 填充 textarea
+  document.getElementById('eval-tc-content').value = formatTestCases(task.result.test_cases);
+  _evalTcEdited = true;
+  _evalTcCurrentName = '';
+  showToast('已加载 ' + task.result.test_cases.length + ' 个测试用例', 'success');
+}
+
+// 切到 eval tab 时，检查是否有 pending 的生成任务已完成
+async function _checkPendingGenResult() {
+  if (!_pendingGenTaskId) return;
+  const taskId = _pendingGenTaskId;
+  const skill = _pendingGenSkill;
+
+  try {
+    const resp = await fetch('/api/tasks/' + taskId).then(r => r.json());
+    const task = resp.task;
+    if (!task || task.status !== 'completed' || !task.result || !task.result.test_cases) {
+      // 任务还在运行或失败了，保持 pending 状态
+      if (task && (task.status === 'failed' || task.status === 'cancelled')) {
+        _pendingGenTaskId = null;
+        _pendingGenSkill = null;
+      }
+      return;
+    }
+    // 确保选中正确的 skill
+    if (skill && document.getElementById('eval-skill').value !== skill) {
+      document.getElementById('eval-skill').value = skill;
+      const items = await listTestCases(skill);
+      fillTcSelect('eval-tc-select', items);
+    }
+    // 仅在 textarea 为空时自动填充
+    const tcEl = document.getElementById('eval-tc-content');
+    if (!tcEl.value.trim()) {
+      tcEl.value = formatTestCases(task.result.test_cases);
+      _evalTcEdited = true;
+      _evalTcCurrentName = '';
+      showToast('已恢复 ' + task.result.test_cases.length + ' 个测试用例', 'success');
+    }
+    _pendingGenTaskId = null;
+    _pendingGenSkill = null;
+  } catch (e) {
+    // 网络错误，保持 pending 状态下次重试
+  }
+}
 
 // --- SSE helper (for test case generation) ---
 function connectSSE(url, taskId, onEvent, onDone) {

@@ -112,6 +112,7 @@ class TaskExecutor:
                 spec_path=spec_path,
                 output_dir=output_dir,
                 ignore_cache=params.get("ignore_cache", False),
+                enable_critic=params.get("enable_critic", True),
             )
             self._emit(task.id, "test_cases", {"test_cases": test_cases})
             self._emit(task.id, "status", {"message": f"生成 {len(test_cases)} 个测试用例"})
@@ -284,6 +285,7 @@ class TaskExecutor:
                 spec_path=params.get("spec_path"),
                 output_dir=run_dir,
                 ignore_cache=params.get("ignore_cache", False),
+                enable_critic=params.get("enable_critic", True),
             )
 
         # 加载 baseline 和 best result

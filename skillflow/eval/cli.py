@@ -32,6 +32,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="结果输出目录（默认: ./results/<skill目录名>）",
     )
     parser.add_argument("--ignore-cache", action="store_true", help="忽略缓存重新生成测试用例")
+    parser.add_argument("--no-critic", action="store_true", help="跳过 Critic 校验和修订步骤")
     parser.add_argument("--debug", action="store_true", help="启用 debug 中间件，输出 agent 执行详细日志")
     parser.add_argument("--save-trace", action="store_true", help="将执行轨迹落盘到 eval/trace/ 目录")
     parser.add_argument(
@@ -74,6 +75,7 @@ def _run(args: argparse.Namespace) -> None:
             spec_path=args.spec,
             output_dir=output,
             ignore_cache=args.ignore_cache,
+            enable_critic=not args.no_critic,
         )
 
     console.print(f"[green]共 {len(test_cases)} 个测试用例[/green]")

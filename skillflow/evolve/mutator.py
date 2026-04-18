@@ -200,6 +200,16 @@ def audit_skill(skill_path: Path, trace_context: str = "", past_strategies: str 
 
 # ---------- 反思分支 ----------
 
+def _format_failed_case(idx: int, case: dict) -> str:
+    """格式化单个失败用例，包含 checkpoints。"""
+    lines = [f"- [{idx + 1}] 问题：{case['question']}", f"  测试目标：{case['test_point']}"]
+    checkpoints = case.get("checkpoints")
+    if checkpoints:
+        cp_text = "、".join(checkpoints)
+        lines.append(f"  评估要点：{cp_text}")
+    return "\n".join(lines)
+
+
 def reflect_on_failures(
     skill_content: str,
     failed_cases: list[dict],
@@ -218,8 +228,7 @@ def reflect_on_failures(
         反思分析文本
     """
     cases_text = "\n".join(
-        f"- [{i+1}] 问题：{c['question']}\n  测试目标：{c['test_point']}"
-        for i, c in enumerate(failed_cases)
+        _format_failed_case(i, c) for i, c in enumerate(failed_cases)
     )
     reasons_text = "\n".join(
         f"- [{i+1}] {c.get('reason', '无原因')}"

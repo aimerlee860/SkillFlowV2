@@ -466,6 +466,7 @@ def _collect_failed_cases(eval_result: dict) -> list[dict]:
                     failed.append({
                         "test_point": case["test_point"],
                         "question": case["question"],
+                        "checkpoints": case.get("checkpoints"),
                         "reason": r["reason"],
                     })
                     break

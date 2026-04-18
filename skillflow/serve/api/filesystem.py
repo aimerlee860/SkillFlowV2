@@ -201,6 +201,7 @@ def save_test_cases(skill_name: str, req: SaveTestCasesRequest):
 class GenerateTestCasesRequest(BaseModel):
     spec: str | None = None
     ignore_cache: bool = False
+    no_critic: bool = False
 
 
 @router.post("/test-cases/{skill_name}/generate")
@@ -221,6 +222,7 @@ def generate_test_cases_api(skill_name: str, req: GenerateTestCasesRequest, requ
         "skill_path": str(skill_path),
         "spec_path": spec_path,
         "ignore_cache": req.ignore_cache,
+        "enable_critic": not req.no_critic,
     }
     task = tm.create_task("generate_test_cases", skill=skill_name, params=params)
 
@@ -236,6 +238,7 @@ def generate_test_cases_api(skill_name: str, req: GenerateTestCasesRequest, requ
                 spec_path=spec_path,
                 output_dir=tempfile.mkdtemp(),
                 ignore_cache=req.ignore_cache,
+                enable_critic=not req.no_critic,
             )
             # done 事件中包含完整结果，方便前端一次性获取
             tm.emit_progress(task_record.id, "done", {

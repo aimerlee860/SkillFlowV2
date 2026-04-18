@@ -10,7 +10,12 @@ from pathlib import Path
 from rich.console import Console
 
 from ..core.llm import get_llm
-from ..core.prompts import TEST_CASE_GEN_PROMPT
+from ..core.prompts import (
+    TEST_CASE_CRITIC_PROMPT,
+    TEST_CASE_FIX_PROMPT,
+    TEST_CASE_GEN_PROMPT,
+    TEST_CASE_REVISE_PROMPT,
+)
 from ..core.utils import ensure_dir, load_json, load_text, save_json
 
 console = Console()
@@ -21,12 +26,159 @@ def _timestamp() -> str:
     return time.strftime("%Y%m%d%H%M")
 
 
+# --- 格式校验 ---
+
+_CODE_INDICATORS = re.compile(r"(def |function |class |import |return |=>|\{$|\{$)", re.MULTILINE)
+
+
+def _is_complex_question(question: str) -> bool:
+    """判断 question 是否为包含代码/数据的复杂场景。"""
+    if "\n" in question:
+        return True
+    if _CODE_INDICATORS.search(question):
+        return True
+    return False
+
+
+def _validate_test_cases(test_cases: list[dict]) -> list[str]:
+    """校验测试用例格式，返回错误列表。为空则表示全部通过。"""
+    errors: list[str] = []
+
+    if not test_cases:
+        errors.append("测试用例列表为空")
+        return errors
+
+    for i, tc in enumerate(test_cases):
+        prefix = f"用例 {i}"
+
+        # 必填字段
+        if not tc.get("test_point", "").strip():
+            errors.append(f"{prefix}: test_point 缺失或为空")
+        elif len(tc["test_point"]) > 50:
+            errors.append(f"{prefix}: test_point 超过50字（当前{len(tc['test_point'])}字）")
+
+        if not tc.get("question", "").strip():
+            errors.append(f"{prefix}: question 缺失或为空")
+        else:
+            limit = 500 if _is_complex_question(tc["question"]) else 200
+            if len(tc["question"]) > limit:
+                errors.append(f"{prefix}: question 超过{limit}字（当前{len(tc['question'])}字）")
+
+        checkpoints = tc.get("checkpoints")
+        if checkpoints is None or not isinstance(checkpoints, list):
+            errors.append(f"{prefix}: checkpoints 缺失或非数组")
+        else:
+            if len(checkpoints) < 2:
+                errors.append(f"{prefix}: checkpoints 不足2条（当前{len(checkpoints)}条）")
+            elif len(checkpoints) > 4:
+                errors.append(f"{prefix}: checkpoints 超过4条（当前{len(checkpoints)}条）")
+            for j, cp in enumerate(checkpoints):
+                if not isinstance(cp, str) or not cp.strip():
+                    errors.append(f"{prefix}: checkpoint[{j}] 为空或非字符串")
+                elif len(cp) > 20:
+                    errors.append(f"{prefix}: checkpoint[{j}] 超过20字（当前{len(cp)}字）")
+
+    return errors
+
+
+# --- LLM 调用辅助 ---
+
+def _call_llm_json(prompt: str) -> dict:
+    """调用 LLM 并解析 JSON 响应。"""
+    llm = get_llm()
+    response = llm.invoke(prompt)
+    response_text = response.content if hasattr(response, "content") else str(response)
+
+    if not response_text or not response_text.strip():
+        raise ValueError("LLM 返回了空响应")
+
+    return _extract_json(response_text)
+
+
+def _format_validation_errors(errors: list[str]) -> str:
+    """将校验错误列表格式化为文本。"""
+    return "\n".join(f"- {e}" for e in errors)
+
+
+# --- 带重试的格式校验关卡 ---
+
+def _validate_and_fix(
+    test_cases_data: dict,
+    skill_content: str,
+    max_retries: int = 3,
+) -> dict:
+    """格式校验关卡：校验不通过则让 LLM 修复，最多重试 max_retries 次。"""
+    test_cases = test_cases_data.get("test_cases", [])
+
+    for attempt in range(max_retries + 1):
+        errors = _validate_test_cases(test_cases)
+        if not errors:
+            return {"test_cases": test_cases}
+
+        if attempt < max_retries:
+            console.print(f"[yellow]格式校验发现 {len(errors)} 个问题，修复中 ({attempt + 1}/{max_retries})[/yellow]")
+            prompt = TEST_CASE_FIX_PROMPT.format(
+                errors=_format_validation_errors(errors),
+                test_cases_json=json.dumps({"test_cases": test_cases}, ensure_ascii=False, indent=2),
+            )
+            try:
+                test_cases_data = _call_llm_json(prompt)
+                test_cases = test_cases_data.get("test_cases", [])
+            except ValueError as e:
+                console.print(f"[yellow]修复调用失败: {e}, 重试...[/yellow]")
+                continue
+        else:
+            raise ValueError(
+                f"格式校验重试 {max_retries} 次后仍有问题:\n"
+                + _format_validation_errors(errors)
+            )
+
+    return {"test_cases": test_cases}  # pragma: no cover
+
+
+# --- Critic 校验 ---
+
+def _run_critic(test_cases: list[dict]) -> list[dict]:
+    """运行 Critic 校验，返回 actions 列表。"""
+    test_cases_json = json.dumps({"test_cases": test_cases}, ensure_ascii=False, indent=2)
+    prompt = TEST_CASE_CRITIC_PROMPT.format(test_cases_json=test_cases_json)
+
+    result = _call_llm_json(prompt)
+    return result.get("actions", [])
+
+
+# --- LLM 修订 ---
+
+def _revise_test_cases(
+    test_cases: list[dict],
+    actions: list[dict],
+    skill_content: str,
+) -> dict:
+    """根据 Critic 意见修订测试用例。"""
+    test_cases_json = json.dumps({"test_cases": test_cases}, ensure_ascii=False, indent=2)
+    actions_text = "\n".join(
+        f"- {'用例' + str(a.get('index', '?')) + ': ' if 'index' in a else '补充: '}"
+        f"{a.get('action', '?')} — {a.get('reason', '')}"
+        for a in actions
+    )
+    prompt = TEST_CASE_REVISE_PROMPT.format(
+        test_cases_json=test_cases_json,
+        critic_actions=actions_text,
+        skill_content=skill_content[:3000],
+    )
+
+    return _call_llm_json(prompt)
+
+
+# --- 主入口 ---
+
 def generate_test_cases(
     skill_path: str | Path,
     spec_path: str | Path | None = None,
     output_dir: str | Path | None = None,
     ignore_cache: bool = False,
     max_retries: int = 2,
+    enable_critic: bool = True,
 ) -> tuple[list[dict], str]:
     """生成测试用例。
 
@@ -35,10 +187,11 @@ def generate_test_cases(
         spec_path: SPEC 文件路径（可选，补充上下文）
         output_dir: 输出目录
         ignore_cache: 是否忽略缓存重新生成
-        max_retries: 解析失败时的最大重试次数
+        max_retries: JSON 解析失败时的最大重试次数
+        enable_critic: 是否启用 Critic 校验和修订
 
     Returns:
-        (测试用例列表, 保存的文件名) — 文件名如 test_cases_202603312043.json
+        (测试用例列表, 保存的文件名)
     """
     skill_content = load_text(Path(skill_path) / "SKILL.md")
     input_content = skill_content
@@ -58,30 +211,56 @@ def generate_test_cases(
             data = load_json(cache_file)
             return data["test_cases"], filename
 
-    # 生成测试用例（带重试）
+    # 阶段 1: LLM 生成
     console.print("[blue]使用 LLM 生成测试用例...[/blue]")
+    test_cases_data = _generate_initial(input_content, max_retries)
+
+    # 阶段 2: 第一道格式校验
+    console.print("[blue]格式校验...[/blue]")
+    test_cases_data = _validate_and_fix(test_cases_data, input_content)
+    console.print(f"[green]格式校验通过，共 {len(test_cases_data['test_cases'])} 个用例[/green]")
+
+    # 阶段 3: Critic 校验 + 修订
+    if enable_critic and test_cases_data["test_cases"]:
+        console.print("[blue]Critic 校验中...[/blue]")
+        actions = _run_critic(test_cases_data["test_cases"])
+
+        if actions:
+            console.print(f"[yellow]Critic 发现 {len(actions)} 个问题，进行修订...[/yellow]")
+            revised_data = _revise_test_cases(
+                test_cases_data["test_cases"], actions, input_content
+            )
+
+            # 阶段 4: 第二道格式校验
+            console.print("[blue]修订后格式校验...[/blue]")
+            test_cases_data = _validate_and_fix(revised_data, input_content)
+            console.print(f"[green]最终用例数: {len(test_cases_data['test_cases'])}[/green]")
+        else:
+            console.print("[green]Critic 校验通过，无需修订[/green]")
+
+    # 保存
+    if output_dir:
+        ensure_dir(output_dir)
+        save_json(Path(output_dir) / filename, test_cases_data)
+        console.print(f"[green]测试用例已保存:[/green] {Path(output_dir) / filename}")
+
+    return test_cases_data["test_cases"], filename
+
+
+def _generate_initial(input_content: str, max_retries: int) -> dict:
+    """初始生成测试用例，带 JSON 解析重试。"""
     prompt = TEST_CASE_GEN_PROMPT.format(skill_content=input_content)
-    llm = get_llm()
 
     for attempt in range(max_retries + 1):
-        response = llm.invoke(prompt)
-        response_text = response.content if hasattr(response, "content") else str(response)
-
-        if not response_text or not response_text.strip():
-            if attempt < max_retries:
-                console.print(f"[yellow]LLM 返回空响应，重试 {attempt + 1}/{max_retries}[/yellow]")
-                continue
-            raise ValueError("LLM 返回了空响应，请检查 API 配置和网络连接")
-
-        # 解析 JSON
         try:
-            test_cases_data = _extract_json(response_text)
-            break  # 解析成功，退出循环
+            result = _call_llm_json(prompt)
+            if "test_cases" not in result:
+                raise ValueError("响应中缺少 test_cases 字段")
+            return result
         except ValueError as e:
             if attempt < max_retries:
                 console.print(f"[yellow]JSON 解析失败，重试 {attempt + 1}/{max_retries}[/yellow]")
                 console.print(f"[dim]错误: {e}[/dim]")
-                # 添加更明确的格式要求
                 retry_prompt = f"""上一次生成的 JSON 格式有问题，请重新生成。
 错误信息: {str(e)[:200]}
 
@@ -91,7 +270,8 @@ def generate_test_cases(
   "test_cases": [
     {{
       "test_point": "简洁描述验证目标",
-      "question": "简短的用户提问（控制在50字以内）"
+      "question": "模拟用户提问（基础场景200字以内，含代码/数据的复杂场景500字以内）",
+      "checkpoints": ["应包含的关键要素1", "应包含的关键要素2"]
     }}
   ]
 }}
@@ -104,14 +284,10 @@ def generate_test_cases(
                 continue
             raise
 
-    # 保存
-    if output_dir:
-        ensure_dir(output_dir)
-        save_json(Path(output_dir) / filename, test_cases_data)
-        console.print(f"[green]测试用例已保存:[/green] {Path(output_dir) / filename}")
+    raise ValueError("生成测试用例失败")  # pragma: no cover
 
-    return test_cases_data["test_cases"], filename
 
+# --- JSON 解析辅助 ---
 
 def _extract_json(text: str) -> dict:
     """从 LLM 响应中提取 JSON。"""

@@ -48,6 +48,7 @@ def extract_exemplars(
         result = _extract_single(
             question=case["question"],
             test_point=case["test_point"],
+            checkpoints=case.get("checkpoints"),
             score=best_trial["score"],
             response=best_trial["response"],
             reason=best_trial["reason"],
@@ -64,15 +65,22 @@ def _extract_single(
     score: float,
     response: str,
     reason: str,
+    checkpoints: list[str] | None = None,
 ) -> dict | None:
     """从单个近阈值失败响应中提取优质模式。
 
     Returns:
         {"pattern": str, "snippet": str} 或 None
     """
+    if checkpoints:
+        checkpoints_text = "、".join(checkpoints)
+    else:
+        checkpoints_text = "（无特定评估要点）"
+
     prompt = EXEMPLAR_EXTRACT_PROMPT.format(
         question=question,
         test_point=test_point,
+        checkpoints=checkpoints_text,
         score=score,
         response=response,
         reason=reason,

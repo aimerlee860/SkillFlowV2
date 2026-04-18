@@ -16,7 +16,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from ..core.agent import build_agent, run_agent, _setup_debug_logging
 from ..core.llm import get_llm
-from ..core.prompts import JUDGE_PROMPT
+from ..core.prompts import JUDGE_PROMPT, JUDGE_PROMPT_WITH_REFERENCE
 
 console = Console()
 debug_logger = logging.getLogger("skillflow.debug")
@@ -25,23 +25,40 @@ debug_logger = logging.getLogger("skillflow.debug")
 _PROGRESS_FILE = "eval_progress.jsonl"
 
 
-def judge_response(test_point: str, question: str, response: str, max_retries: int = 3) -> tuple[dict, float]:
+def judge_response(test_point: str, question: str, response: str, checkpoints: list[str] | None = None, max_retries: int = 3, expected: str | None = None) -> tuple[dict, float]:
     """使用 LLM-as-judge 评估响应。
 
     Args:
         test_point: 测试点名称
         question: 测试问题
         response: agent 响应
+        checkpoints: 评估要点列表
         max_retries: 最大重试次数（默认 3 次）
+        expected: 人工参考答案（可选，提供后 Judge 使用带参考答案的 prompt）
 
     Returns:
         (result_dict, elapsed_seconds)
     """
-    prompt = JUDGE_PROMPT.format(
-        test_point=test_point,
-        question=question,
-        response=response,
-    )
+    if checkpoints:
+        checkpoints_text = "\n".join(f"- {cp}" for cp in checkpoints)
+    else:
+        checkpoints_text = "（无特定评估要点，按通用标准评估）"
+
+    if expected and expected.strip():
+        prompt = JUDGE_PROMPT_WITH_REFERENCE.format(
+            test_point=test_point,
+            question=question,
+            response=response,
+            checkpoints=checkpoints_text,
+            expected=expected,
+        )
+    else:
+        prompt = JUDGE_PROMPT.format(
+            test_point=test_point,
+            question=question,
+            response=response,
+            checkpoints=checkpoints_text,
+        )
     llm = get_llm()
 
     total_elapsed = 0.0
@@ -88,6 +105,8 @@ def _run_single_trial(
     trial_idx: int,
     debug: bool = False,
     collect_trace: bool = False,
+    checkpoints: list[str] | None = None,
+    expected: str | None = None,
 ) -> dict:
     """运行单次 trial：每次新建 agent 保持上下文干净。"""
     from .trace import ExecutionTrace, extract_trace
@@ -116,7 +135,7 @@ def _run_single_trial(
     )
 
     # 阶段 3: judge 评估
-    judge_result, judge_elapsed = judge_response(test_point, question, response)
+    judge_result, judge_elapsed = judge_response(test_point, question, response, checkpoints=checkpoints, expected=expected)
 
     console.print(
         f"  [dim]  trial {trial_idx+1}: "
@@ -228,6 +247,8 @@ def run_eval(
                         skill_path, tc["test_point"], tc["question"], trial_idx,
                         debug=debug,
                         collect_trace=collect_trace,
+                        checkpoints=tc.get("checkpoints"),
+                        expected=tc.get("expected"),
                     )
                     case_results.append(result)
                     progress.advance(task)
@@ -257,6 +278,7 @@ def run_eval(
                 results[i] = {
                     "test_point": tc["test_point"],
                     "question": tc["question"],
+                    "checkpoints": tc.get("checkpoints"),
                     "results": case_results,
                 }
         else:
@@ -271,6 +293,8 @@ def run_eval(
                             skill_path, tc["test_point"], tc["question"], trial_idx,
                             debug,
                             collect_trace,
+                            tc.get("checkpoints"),
+                            tc.get("expected"),
                         )
                         future_map[future] = (i, trial_idx, tc["test_point"], tc["question"])
 
@@ -310,6 +334,7 @@ def run_eval(
                     results[i] = {
                         "test_point": tc["test_point"],
                         "question": tc["question"],
+                        "checkpoints": tc.get("checkpoints"),
                         "results": case_results,
                     }
 

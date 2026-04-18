@@ -22,6 +22,7 @@ class EvalRequest(BaseModel):
     debug: bool = False
     save_trace: bool = False
     ignore_cache: bool = False
+    no_critic: bool = False
     test_cases_file: str | None = None
     test_cases_content: str | None = None  # 前端传来的 JSON 字符串
 
@@ -51,6 +52,7 @@ def start_eval(req: EvalRequest, request: Request):
         "debug": req.debug,
         "save_trace": req.save_trace,
         "ignore_cache": req.ignore_cache,
+        "enable_critic": not req.no_critic,
         "test_cases_file": req.test_cases_file,
         "test_cases": None,  # 运行时生成或从 test_cases_content 解析
     }
