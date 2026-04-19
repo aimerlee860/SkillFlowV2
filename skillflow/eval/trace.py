@@ -60,6 +60,20 @@ class PathSummary:
 
 
 @dataclass
+class KeyEpisode:
+    """具有诊断价值的关键执行片段。"""
+
+    trial: int
+    step_index: int
+    reason: str  # 为什么这段有诊断价值
+    tool_name: str = ""
+    tool_args_preview: str = ""
+    tool_result_preview: str = ""
+    tool_error: str | None = None
+    llm_output_preview: str = ""
+
+
+@dataclass
 class CaseTraceAggregate:
     """单个 case 多次 trial 的聚合轨迹。"""
 
@@ -79,6 +93,8 @@ class CaseTraceAggregate:
     best_path: PathSummary | None = None
     worst_path: PathSummary | None = None
     avg_path_length: float = 0.0
+    # 层次4：关键诊断片段（选择性保留高价值步骤）
+    key_episodes: list[KeyEpisode] = field(default_factory=list)
 
 
 # ── 提取 ──────────────────────────────────────────────────────
@@ -301,6 +317,104 @@ def _detect_tool_misuse(trace: ExecutionTrace) -> list[str]:
     return misuses
 
 
+def _extract_key_episodes(traces: list[ExecutionTrace], max_episodes: int = 5) -> list[KeyEpisode]:
+    """从失败 trial 的轨迹中提取具有诊断价值的关键步骤片段。
+
+    选取策略（按优先级）：
+    1. 工具调用出错的步骤（最高优先）
+    2. 分化点前后的步骤（pass/fail 路径分叉处）
+    3. 连续重试同一工具的步骤（卡住信号）
+
+    只处理失败的 trial，成功的 trial 不需要诊断。
+    """
+    episodes: list[KeyEpisode] = []
+    failed = [t for t in traces if not t.passed]
+
+    if not failed:
+        return episodes
+
+    passed = [t for t in traces if t.passed]
+
+    for trace in failed:
+        for i, step in enumerate(trace.steps):
+            # 优先级1：工具出错
+            if step.step_type == "tool_call" and step.tool_error:
+                episodes.append(KeyEpisode(
+                    trial=trace.trial,
+                    step_index=i + 1,
+                    reason="工具调用出错",
+                    tool_name=step.tool_name,
+                    tool_args_preview=_truncate(step.tool_args_preview, 200),
+                    tool_result_preview=_truncate(step.tool_result_preview, 200),
+                    tool_error=_truncate(step.tool_error, 200),
+                ))
+
+    # 优先级2：分化点附近步骤（需要 pass 和 fail 的 trial）
+    if passed and failed:
+        pass_tools = [
+            (i, s) for i, s in enumerate(passed[0].steps)
+            if s.step_type == "tool_call"
+        ]
+        for ft in failed[:1]:  # 只看第一个失败 trial
+            fail_tools = [
+                (i, s) for i, s in enumerate(ft.steps)
+                if s.step_type == "tool_call"
+            ]
+            for (pi, ps), (fi, fs) in zip(pass_tools, fail_tools):
+                if ps.tool_name != fs.tool_name:
+                    # 分化点：保留 fail 侧的前后上下文
+                    ctx_start = max(0, fi - 1)
+                    ctx_end = min(len(ft.steps), fi + 2)
+                    for ci in range(ctx_start, ctx_end):
+                        s = ft.steps[ci]
+                        if any(ep.step_index == ci + 1 and ep.trial == ft.trial for ep in episodes):
+                            continue
+                        episodes.append(KeyEpisode(
+                            trial=ft.trial,
+                            step_index=ci + 1,
+                            reason=f"分化点附近（pass调用{ps.tool_name}，fail调用{fs.tool_name}）",
+                            tool_name=s.tool_name,
+                            tool_args_preview=_truncate(s.tool_args_preview, 200),
+                            tool_result_preview=_truncate(s.tool_result_preview, 200),
+                            tool_error=s.tool_error,
+                            llm_output_preview=_truncate(s.llm_output_preview, 200) if s.step_type == "llm_call" else "",
+                        ))
+                    break
+
+    # 优先级3：连续重试
+    for trace in failed:
+        tool_calls = [(i, s) for i, s in enumerate(trace.steps) if s.step_type == "tool_call"]
+        prev_name = None
+        repeat_count = 0
+        for idx, (i, s) in enumerate(tool_calls):
+            if s.tool_name == prev_name and s.tool_name:
+                repeat_count += 1
+                if repeat_count == 2:  # 第3次连续调用时记录
+                    if not any(ep.step_index == i + 1 and ep.trial == trace.trial for ep in episodes):
+                        episodes.append(KeyEpisode(
+                            trial=trace.trial,
+                            step_index=i + 1,
+                            reason=f"{s.tool_name} 连续调用 {repeat_count + 1} 次",
+                            tool_name=s.tool_name,
+                            tool_args_preview=_truncate(s.tool_args_preview, 200),
+                            tool_result_preview=_truncate(s.tool_result_preview, 200),
+                        ))
+            else:
+                repeat_count = 0
+            prev_name = s.tool_name
+
+    # 去重（同 trial 同 step 只保留一个）并限制总数
+    seen: set[tuple[int, int]] = set()
+    unique: list[KeyEpisode] = []
+    for ep in episodes:
+        key = (ep.trial, ep.step_index)
+        if key not in seen:
+            seen.add(key)
+            unique.append(ep)
+
+    return unique[:max_episodes]
+
+
 def aggregate_case_traces(
     traces: list[ExecutionTrace],
 ) -> CaseTraceAggregate:
@@ -347,6 +461,9 @@ def aggregate_case_traces(
     best_trace = min(traces, key=lambda t: len(t.steps))
     worst_trace = max(traces, key=lambda t: len(t.steps))
 
+    # 层次4：关键诊断片段
+    key_episodes = _extract_key_episodes(traces)
+
     return CaseTraceAggregate(
         test_point=traces[0].test_point,
         question=traces[0].question,
@@ -361,6 +478,7 @@ def aggregate_case_traces(
         best_path=_to_path_summary(best_trace),
         worst_path=_to_path_summary(worst_trace),
         avg_path_length=sum(len(t.steps) for t in traces) / len(traces),
+        key_episodes=key_episodes,
     )
 
 
@@ -381,7 +499,24 @@ CASE_TRACE_TEMPLATE = """\
 {consensus_section}
 {divergence_section}
 {misuse_section}
+{episodes_section}
 """
+
+
+def _format_episode(ep: KeyEpisode) -> str:
+    """格式化单个关键片段。"""
+    parts = [f"  Trial {ep.trial} 第{ep.step_index}步 [{ep.reason}]"]
+    if ep.tool_name:
+        parts.append(f"    工具: {ep.tool_name}")
+        if ep.tool_args_preview:
+            parts.append(f"    参数: {ep.tool_args_preview}")
+    if ep.llm_output_preview:
+        parts.append(f"    LLM输出: {ep.llm_output_preview}")
+    if ep.tool_result_preview:
+        parts.append(f"    结果: {ep.tool_result_preview}")
+    if ep.tool_error:
+        parts.append(f"    错误: {ep.tool_error}")
+    return "\n".join(parts)
 
 
 def format_trace_context(aggregates: list[CaseTraceAggregate]) -> str:
@@ -393,7 +528,7 @@ def format_trace_context(aggregates: list[CaseTraceAggregate]) -> str:
     for agg in aggregates:
         consensus_section = ""
         if agg.consensus_errors:
-            lines = ["**共识错误**（多数 trial 共有）：n"]
+            lines = ["**共识错误**（多数 trial 共有）："]
             for e in agg.consensus_errors:
                 lines.append(f"  - {_truncate(e, 100)}")
             consensus_section = "\n".join(lines)
@@ -404,10 +539,17 @@ def format_trace_context(aggregates: list[CaseTraceAggregate]) -> str:
 
         misuse_section = ""
         if agg.consensus_tool_misuse:
-            lines = ["**工具误用模式**：n"]
+            lines = ["**工具误用模式**："]
             for m in agg.consensus_tool_misuse:
                 lines.append(f"  - {_truncate(m, 100)}")
             misuse_section = "\n".join(lines)
+
+        episodes_section = ""
+        if agg.key_episodes:
+            lines = ["**关键失败步骤**（失败 trial 的具体出错细节）："]
+            for ep in agg.key_episodes:
+                lines.append(_format_episode(ep))
+            episodes_section = "\n".join(lines)
 
         parts.append(CASE_TRACE_TEMPLATE.format(
             test_point=agg.test_point,
@@ -421,9 +563,93 @@ def format_trace_context(aggregates: list[CaseTraceAggregate]) -> str:
             consensus_section=consensus_section,
             divergence_section=divergence_section,
             misuse_section=misuse_section,
+            episodes_section=episodes_section,
         ))
 
     return TRACE_CONTEXT_TEMPLATE.format(case_summaries="\n".join(parts))
+
+
+# ── Judge 专用格式化 ───────────────────────────────────────────
+
+
+def _detect_process_signals(trace: ExecutionTrace) -> list[str]:
+    """检测单次 trial 的过程异常信号（仅客观负面事实，不做主观判断）。"""
+    signals: list[str] = []
+
+    if not trace.skill_triggered:
+        signals.append("技能未被触发")
+
+    # 工具调用失败
+    tool_errors: dict[str, list[str]] = {}
+    for step in trace.steps:
+        if step.step_type == "tool_call" and step.tool_error:
+            tool_errors.setdefault(step.tool_name, []).append(step.tool_error)
+    for name, errors in tool_errors.items():
+        signals.append(f"工具 {name} 调用失败: {_truncate(errors[0], 80)}")
+
+    # 带错误的连续重试：同一工具连续 ≥2 次，且其中至少 1 次有 tool_error
+    tool_calls = [(i, s) for i, s in enumerate(trace.steps) if s.step_type == "tool_call"]
+    if tool_calls:
+        run_name = tool_calls[0][1].tool_name
+        run_count = 1
+        run_has_error = bool(tool_calls[0][1].tool_error)
+        for idx in range(1, len(tool_calls)):
+            _, step = tool_calls[idx]
+            if step.tool_name == run_name:
+                run_count += 1
+                run_has_error = run_has_error or bool(step.tool_error)
+            else:
+                if run_count >= 2 and run_has_error and run_name:
+                    signals.append(f"工具 {run_name} 连续调用 {run_count} 次（含失败重试）")
+                run_name = step.tool_name
+                run_count = 1
+                run_has_error = bool(step.tool_error)
+        if run_count >= 2 and run_has_error and run_name:
+            signals.append(f"工具 {run_name} 连续调用 {run_count} 次（含失败重试）")
+
+    return signals
+
+
+def format_trace_for_judge(trace: ExecutionTrace) -> str:
+    """将单次 trial 轨迹格式化为注入 judge prompt 的文本。
+
+    Returns:
+        格式化文本，trace.steps 为空时返回空字符串。
+    """
+    if not trace.steps:
+        return ""
+
+    skill_status = "已触发" if trace.skill_triggered else "未触发"
+    header = (
+        f"执行过程：共 {len(trace.steps)} 步，"
+        f"{trace.total_tool_calls} 次工具调用，"
+        f"{trace.total_llm_calls} 次 LLM 调用，"
+        f"技能{skill_status}"
+    )
+
+    # 异常信号（条件展示）
+    signals = _detect_process_signals(trace)
+    signal_section = ""
+    if signals:
+        signal_section = "\n\n过程异常信号\n" + "\n".join(f"- {s}" for s in signals)
+
+    # 逐步骤展示
+    step_lines: list[str] = []
+    for i, step in enumerate(trace.steps):
+        if step.step_type == "tool_call":
+            args_preview = _truncate(step.tool_args_preview, 100)
+            if step.tool_error:
+                status = f" → 失败: {_truncate(step.tool_error, 100)}"
+            else:
+                status = " → 成功"
+            step_lines.append(f"{i+1}. [工具: {step.tool_name}] {args_preview}{status}")
+        elif step.step_type == "llm_call":
+            preview = _truncate(step.llm_output_preview, 100)
+            step_lines.append(f"{i+1}. [LLM] {preview}")
+
+    steps_section = "\n执行步骤\n" + "\n".join(step_lines)
+
+    return header + signal_section + steps_section
 
 
 # ── 落盘 ──────────────────────────────────────────────────────

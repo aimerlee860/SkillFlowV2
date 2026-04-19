@@ -95,7 +95,7 @@ class TaskManager:
             self.emit_progress(tid, event_type, data)
 
         from .task_executor import TaskExecutor
-        executor = TaskExecutor(emit_progress=_emit_progress)
+        executor = TaskExecutor(emit_progress=_emit_progress, store=self.store)
 
         # 启动 worker 线程
         def _worker():
@@ -166,7 +166,7 @@ class TaskManager:
         def _worker():
             try:
                 from .task_executor import TaskExecutor
-                executor = TaskExecutor(emit_progress=_emit_progress)
+                executor = TaskExecutor(emit_progress=_emit_progress, store=self.store)
                 result = executor.execute(task, recovery=True)
                 self.store.update_status(to_execute, "completed", result=result)
             except Exception as e:
@@ -239,10 +239,10 @@ class TaskManager:
             try:
                 resolved_base = output_path.resolve()
                 if str(resolved_base).startswith(str(results_dir.resolve())):
-                    # eval 任务: output_dir 已包含 timestamp，直接删除
-                    # evolve 任务: output_dir 是父目录，需要从 result.run_id 获取 timestamp
                     if task.task_type == "evolve" and task.result and task.result.get("run_id"):
-                        actual_path = resolved_base / task.result["run_id"]
+                        run_id = task.result["run_id"]
+                        # 新格式: output_dir 已含时间戳; 旧格式: output_dir 是父目录
+                        actual_path = resolved_base if resolved_base.name == run_id else resolved_base / run_id
                     else:
                         actual_path = resolved_base
 

@@ -193,6 +193,14 @@ class TaskStore:
                 task_id,
             ))
 
+    def update_output_dir(self, task_id: str, output_dir: str) -> None:
+        """更新任务的输出目录路径。"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE tasks SET output_dir = ? WHERE id = ?",
+                (output_dir, task_id),
+            )
+
     def update_progress(self, task_id: str, current: int, total: int) -> None:
         """更新进度值。"""
         with sqlite3.connect(self.db_path) as conn:

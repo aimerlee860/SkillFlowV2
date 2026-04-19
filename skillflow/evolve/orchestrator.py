@@ -46,6 +46,8 @@ def evolve_skill(
     debug: bool = False,
     save_trace: bool = False,
     emit_progress: Optional[Callable[[str, str, dict], None]] = None,
+    resume_from: dict | None = None,
+    run_id: str | None = None,
 ) -> dict:
     """执行多轮技能演化流程。
 
@@ -65,96 +67,122 @@ def evolve_skill(
         debug: 是否启用 debug 中间件
         save_trace: 是否将执行轨迹落盘到各 iter-*/trace/ 子目录
         emit_progress: 进度回调函数，签名 (event_type, event_data)
+        resume_from: 恢复状态 dict，提供则跳过 baseline 直接继续迭代。
+            包含: run_dir, test_cases, baseline_result, best_result,
+            best_rate, best_iter, history
+        run_id: 运行目录的时间戳标识（如 "202604181400"），提供则用此值
+            创建子目录，不自行生成。用于调用方预计算并持久化 run_dir。
 
     Returns:
-        演化记录 dict
+        演化记录 dict（含 run_dir 字段）
     """
     skill_path = Path(skill_path).resolve()
-    output_dir = Path(output_dir)
-    ensure_dir(output_dir)
 
     def _emit(event_type: str, data: dict) -> None:
         if emit_progress:
             emit_progress(event_type, data)
 
-    # 创建 timestamp 运行目录，支持多次执行
-    timestamp = time.strftime("%Y%m%d%H%M")
-    run_dir = output_dir / timestamp
-    if run_dir.exists():
-        shutil.rmtree(run_dir)
-    ensure_dir(run_dir)
-    output_dir = run_dir
-
-    # Step 1: 获取测试用例
-    console.print("[bold blue]Step 1: 获取测试用例[/bold blue]")
-    _emit("status", {"phase": "test_cases", "message": "获取测试用例..."})
-    if test_cases_file:
-        console.print(f"[blue]加载测试用例文件:[/blue] {test_cases_file}")
-        data = load_json(test_cases_file)
-        test_cases = data["test_cases"] if isinstance(data, dict) else data
-    else:
-        test_cases, _ = generate_test_cases(
-            skill_path=skill_path,
-            spec_path=spec_path,
-            output_dir=output_dir,
-            ignore_cache=ignore_cache,
-        )
-    console.print(f"[green]共 {len(test_cases)} 个测试用例[/green]\n")
-    _emit("status", {"phase": "test_cases", "message": f"共 {len(test_cases)} 个测试用例", "count": len(test_cases)})
-
-    # Step 2: Baseline eval
-    console.print("[bold blue]Step 2: 运行 Baseline 评估[/bold blue]")
-    _emit("status", {"phase": "baseline_eval", "message": "运行 Baseline 评估..."})
-
-    def _baseline_progress(event_type: str, data: dict) -> None:
-        _emit(event_type, {**data, "phase": "baseline_eval"})
-
-    baseline_result = run_eval(
-        skill_path=skill_path,
-        test_cases=test_cases,
-        trials=trials,
-        parallel=parallel,
-        debug=debug,
-        collect_trace=True,
-        output_dir=output_dir,
-        save_trace=save_trace,
-        emit_progress=_baseline_progress,
-    )
-    save_json(output_dir / "baseline.json",
-              {k: v for k, v in baseline_result.items() if k != "_traces"})
-    best_rate = baseline_result["overall_reward"]
-    best_result = baseline_result  # 保存完整结果，用于 case 级回归检测
-    best_iter = 0  # 最优版本对应的迭代号（0 = baseline）
-    console.print(f"[green]Baseline Reward:[/green] {best_rate:.4f}")
-    console.print(f"[blue]演化模式:[/blue] {mode}\n")
-
-    # 生成 baseline 轨迹摘要
-    trace_context = _build_trace_context(baseline_result)
-
-    # 打印 baseline 详细评分表格
-    _print_baseline_table(baseline_result)
-
-    # 收集 baseline 失败用例，供第一轮反思使用
-    failed_cases = _collect_failed_cases(baseline_result)
-
-    # 备份原始技能（完整目录，保留技能目录名）
     skill_name = skill_path.name
-    backup_dir = output_dir / "baseline_skill" / skill_name
-    if backup_dir.exists():
-        shutil.rmtree(backup_dir.parent)
-    shutil.copytree(skill_path, backup_dir)
-    best_dir = backup_dir  # 当前最优版本的技能目录
 
-    # 迭代演化
-    history: list[dict] = []
-    no_improve_count = 0
-    no_change_count = 0
+    if resume_from:
+        # === 恢复模式：从已有状态继续 ===
+        output_dir = Path(resume_from["run_dir"])
+        test_cases = resume_from["test_cases"]
+        baseline_result = resume_from["baseline_result"]
+        best_result = resume_from["best_result"]
+        best_rate = resume_from["best_rate"]
+        best_iter = resume_from["best_iter"]
+        history: list[dict] = resume_from["history"]
+        start_iteration = len(history) + 1
+
+        backup_dir = output_dir / "baseline_skill" / skill_name
+        best_dir = backup_dir if best_iter == 0 else output_dir / f"iter-{best_iter}" / skill_name
+
+        no_improve_count, no_change_count = _restore_counters(history)
+        trace_context = _build_trace_context(best_result) if mode == "greedy" else ""
+        failed_cases = _collect_failed_cases(best_result)
+
+        console.print(f"[bold blue]恢复演化: 从轮次 {start_iteration} 继续[/bold blue]")
+        _emit("status", {"phase": "resume", "message": f"恢复演化: 从轮次 {start_iteration} 继续"})
+    else:
+        # === 正常模式：从头开始 ===
+        output_dir = Path(output_dir)
+        ensure_dir(output_dir)
+
+        # 创建 timestamp 运行目录，支持多次执行
+        timestamp = run_id or time.strftime("%Y%m%d%H%M")
+        run_dir = output_dir / timestamp
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
+        ensure_dir(run_dir)
+        output_dir = run_dir
+
+        # Step 1: 获取测试用例
+        console.print("[bold blue]Step 1: 获取测试用例[/bold blue]")
+        _emit("status", {"phase": "test_cases", "message": "获取测试用例..."})
+        if test_cases_file:
+            console.print(f"[blue]加载测试用例文件:[/blue] {test_cases_file}")
+            data = load_json(test_cases_file)
+            test_cases = data["test_cases"] if isinstance(data, dict) else data
+        else:
+            test_cases, _ = generate_test_cases(
+                skill_path=skill_path,
+                spec_path=spec_path,
+                output_dir=output_dir,
+                ignore_cache=ignore_cache,
+            )
+        console.print(f"[green]共 {len(test_cases)} 个测试用例[/green]\n")
+        _emit("status", {"phase": "test_cases", "message": f"共 {len(test_cases)} 个测试用例", "count": len(test_cases)})
+
+        # Step 2: Baseline eval
+        console.print("[bold blue]Step 2: 运行 Baseline 评估[/bold blue]")
+        _emit("status", {"phase": "baseline_eval", "message": "运行 Baseline 评估..."})
+
+        def _baseline_progress(event_type: str, data: dict) -> None:
+            _emit(event_type, {**data, "phase": "baseline_eval"})
+
+        baseline_result = run_eval(
+            skill_path=skill_path,
+            test_cases=test_cases,
+            trials=trials,
+            parallel=parallel,
+            debug=debug,
+            collect_trace=True,
+            output_dir=output_dir,
+            save_trace=save_trace,
+            emit_progress=_baseline_progress,
+        )
+        save_json(output_dir / "baseline.json",
+                  {k: v for k, v in baseline_result.items() if k != "_traces"})
+        best_rate = baseline_result["overall_reward"]
+        best_result = baseline_result
+        best_iter = 0
+        console.print(f"[green]Baseline Reward:[/green] {best_rate:.4f}")
+        console.print(f"[blue]演化模式:[/blue] {mode}\n")
+
+        trace_context = _build_trace_context(baseline_result)
+        _print_baseline_table(baseline_result)
+        failed_cases = _collect_failed_cases(baseline_result)
+
+        # 备份原始技能（完整目录，保留技能目录名）
+        backup_dir = output_dir / "baseline_skill" / skill_name
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir.parent)
+        shutil.copytree(skill_path, backup_dir)
+        best_dir = backup_dir
+
+        history = []
+        start_iteration = 1
+        no_improve_count = 0
+        no_change_count = 0
+
+    # === 共用迭代循环 ===
     stop_reason = "max_iterations"
     log_file = output_dir / "evolve_log.json"
 
     _emit("status", {"phase": "evolve", "message": f"开始演化，共 {max_iterations} 轮迭代", "max_iterations": max_iterations})
 
-    for iteration in range(1, max_iterations + 1):
+    for iteration in range(start_iteration, max_iterations + 1):
         console.rule(f"[bold cyan]演化轮次 {iteration}/{max_iterations} ({mode})[/bold cyan]")
         _emit("iteration_start", {
             "iteration": iteration,
@@ -266,7 +294,7 @@ def evolve_skill(
             console.print("")
             continue
 
-        # 评估演化后的技能（greedy 模式需要采集轨迹）
+        # 评估演化后的技能（始终采集轨迹，供下轮变异参考）
         _emit("status", {"phase": "eval", "message": f"评估轮次 {iteration}...", "iteration": iteration})
 
         def _iter_progress(event_type: str, data: dict) -> None:
@@ -278,7 +306,7 @@ def evolve_skill(
             trials=trials,
             parallel=parallel,
             debug=debug,
-            collect_trace=(mode == "greedy") or save_trace,
+            collect_trace=True,
             output_dir=iter_dir,
             save_trace=save_trace,
             emit_progress=_iter_progress,
@@ -338,12 +366,12 @@ def evolve_skill(
             best_iter = iteration
             best_rate = evolved_rate
             best_result = evolved_result
-            # greedy 模式：更新轨迹摘要为当前最优版本
-            if mode == "greedy":
-                trace_context = _build_trace_context(evolved_result)
             no_improve_count = 0
         else:
             no_improve_count += 1
+
+        # 每轮都用最新 eval 结果更新轨迹诊断，供下轮变异参考
+        trace_context = _build_trace_context(evolved_result)
 
         # 更新失败用例，供下轮反思使用
         failed_cases = _collect_failed_cases(evolved_result)
@@ -403,6 +431,7 @@ def evolve_skill(
         best_iter=best_iter,
     )
     save_json(output_dir / "evolve_log.json", log)
+    log["run_dir"] = str(output_dir)
     return log
 
 
@@ -496,6 +525,32 @@ def _build_past_strategies(history: list[dict]) -> str:
         lines.append(entry)
 
     return "\n".join(lines) + "\n"
+
+
+def _restore_counters(history: list[dict]) -> tuple[int, int]:
+    """从 history 尾部反推 no_improve_count 和 no_change_count。
+
+    no_change_count: 连续尾部 no_changes 条目数。
+    no_improve_count: 跳过尾部 no_changes 后，连续非 accepted 条目数。
+    （no_changes 轮次走 continue，不触及 no_improve_count。）
+    """
+    no_change_count = 0
+    for h in reversed(history):
+        if h.get("skip_reason") == "no_changes":
+            no_change_count += 1
+        else:
+            break
+
+    no_improve_count = 0
+    for h in reversed(history):
+        sr = h.get("skip_reason", "")
+        if sr == "no_changes":
+            continue
+        if h.get("accepted", False):
+            break
+        no_improve_count += 1
+
+    return no_improve_count, no_change_count
 
 
 def _build_trace_context(eval_result: dict) -> str:

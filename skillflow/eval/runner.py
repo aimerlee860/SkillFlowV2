@@ -25,7 +25,7 @@ debug_logger = logging.getLogger("skillflow.debug")
 _PROGRESS_FILE = "eval_progress.jsonl"
 
 
-def judge_response(test_point: str, question: str, response: str, checkpoints: list[str] | None = None, max_retries: int = 3, expected: str | None = None) -> tuple[dict, float]:
+def judge_response(test_point: str, question: str, response: str, checkpoints: list[str] | None = None, max_retries: int = 3, expected: str | None = None, trace_section: str = "") -> tuple[dict, float]:
     """使用 LLM-as-judge 评估响应。
 
     Args:
@@ -35,6 +35,7 @@ def judge_response(test_point: str, question: str, response: str, checkpoints: l
         checkpoints: 评估要点列表
         max_retries: 最大重试次数（默认 3 次）
         expected: 人工参考答案（可选，提供后 Judge 使用带参考答案的 prompt）
+        trace_section: 执行轨迹摘要（可选，注入 judge prompt 供过程质量评估）
 
     Returns:
         (result_dict, elapsed_seconds)
@@ -44,6 +45,8 @@ def judge_response(test_point: str, question: str, response: str, checkpoints: l
     else:
         checkpoints_text = "（无特定评估要点，按通用标准评估）"
 
+    formatted_trace = f"\n## {trace_section}\n" if trace_section else ""
+
     if expected and expected.strip():
         prompt = JUDGE_PROMPT_WITH_REFERENCE.format(
             test_point=test_point,
@@ -51,6 +54,7 @@ def judge_response(test_point: str, question: str, response: str, checkpoints: l
             response=response,
             checkpoints=checkpoints_text,
             expected=expected,
+            trace_section=formatted_trace,
         )
     else:
         prompt = JUDGE_PROMPT.format(
@@ -58,6 +62,7 @@ def judge_response(test_point: str, question: str, response: str, checkpoints: l
             question=question,
             response=response,
             checkpoints=checkpoints_text,
+            trace_section=formatted_trace,
         )
     llm = get_llm()
 
@@ -109,7 +114,7 @@ def _run_single_trial(
     expected: str | None = None,
 ) -> dict:
     """运行单次 trial：每次新建 agent 保持上下文干净。"""
-    from .trace import ExecutionTrace, extract_trace
+    from .trace import ExecutionTrace, extract_trace, format_trace_for_judge
 
     # 阶段 1: 构建 agent
     t_build = time.perf_counter()
@@ -134,13 +139,27 @@ def _run_single_trial(
         f"agent={agent_elapsed:.2f}s, judge...[/dim]", end=""
     )
 
-    # 阶段 3: judge 评估
-    judge_result, judge_elapsed = judge_response(test_point, question, response, checkpoints=checkpoints, expected=expected)
+    # 阶段 3: 提取轨迹（始终执行，供 judge 和可选存储使用）
+    trace = extract_trace(messages, trial_idx + 1, test_point, question, skill_path)
+    trace_section = format_trace_for_judge(trace)
+
+    # 阶段 4: judge 评估（注入轨迹）
+    judge_result, judge_elapsed = judge_response(
+        test_point, question, response,
+        checkpoints=checkpoints, expected=expected,
+        trace_section=trace_section,
+    )
 
     console.print(
         f"  [dim]  trial {trial_idx+1}: "
         f"judge={judge_elapsed:.2f}s, total={build_elapsed+agent_elapsed+judge_elapsed:.2f}s[/dim]", end=""
     )
+
+    # 回填轨迹结果
+    trace.final_response = response
+    trace.score = judge_result["score"]
+    trace.passed = judge_result["pass"]
+    trace.judge_reason = judge_result["reason"]
 
     result = {
         "trial": trial_idx + 1,
@@ -154,13 +173,8 @@ def _run_single_trial(
         "time_total": round(build_elapsed + agent_elapsed + judge_elapsed, 2),
     }
 
-    # 阶段 4: 轨迹提取（可选）
+    # 仅 collect_trace 时将完整 trace 对象存入 result
     if collect_trace:
-        trace = extract_trace(messages, trial_idx + 1, test_point, question, skill_path)
-        trace.final_response = response
-        trace.score = judge_result["score"]
-        trace.passed = judge_result["pass"]
-        trace.judge_reason = judge_result["reason"]
         result["_trace"] = trace
 
     return result

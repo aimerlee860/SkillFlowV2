@@ -219,7 +219,9 @@ def download_task_results(task_id: str, request: Request):
 
     # 确定 actual_path（处理 evolve 的 timestamp 子目录）
     if task.task_type == "evolve" and task.result and task.result.get("run_id"):
-        actual_path = output_dir / task.result["run_id"]
+        run_id = task.result["run_id"]
+        # 新格式: output_dir 已含时间戳; 旧格式: output_dir 是父目录
+        actual_path = output_dir if output_dir.name == run_id else output_dir / run_id
     else:
         actual_path = output_dir
 

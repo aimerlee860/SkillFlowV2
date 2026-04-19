@@ -91,12 +91,30 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 .content-preview { background: #f5f5f5; border-radius: 6px; padding: 16px; margin-top: 12px; max-height: 400px; overflow-y: auto; }
 .content-preview pre { font-family: "SF Mono", Monaco, monospace; font-size: 12px; white-space: pre-wrap; color: #333; }
 
-/* Diff viewer */
-.diff-viewer { font-family: "SF Mono", Monaco, monospace; font-size: 12px; white-space: pre; }
-.diff-header { color: #666; }
-.diff-hunk { color: #2196f3; font-weight: bold; }
-.diff-add { background: #e8f5e9; color: #2e7d32; }
-.diff-del { background: #ffebee; color: #c62828; }
+/* Diff viewer - side by side */
+.diff-sbs { border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden; margin-bottom: 12px; font-family: "SF Mono", Monaco, Consolas, monospace; font-size: 12px; }
+.diff-sbs-file-header { background: #f5f5f5; padding: 6px 12px; font-weight: 600; color: #333; border-bottom: 1px solid #e0e0e0; display: flex; align-items: center; gap: 8px; }
+.diff-sbs-file-header .diff-status { font-size: 11px; padding: 1px 6px; border-radius: 3px; font-weight: 400; }
+.diff-sbs-file-header .diff-status.modified { background: #fff3e0; color: #e65100; }
+.diff-sbs-file-header .diff-status.added { background: #e8f5e9; color: #2e7d32; }
+.diff-sbs-file-header .diff-status.deleted { background: #ffebee; color: #c62828; }
+.diff-sbs-cols { display: flex; overflow-x: auto; }
+.diff-sbs-pane { flex: 1; min-width: 0; overflow-x: auto; }
+.diff-sbs-pane + .diff-sbs-pane { border-left: 2px solid #e0e0e0; }
+.diff-sbs-pane-header { background: #fafafa; padding: 3px 8px; font-size: 11px; color: #888; border-bottom: 1px solid #eee; text-align: center; position: sticky; top: 0; }
+.diff-sbs-row { display: flex; min-height: 20px; line-height: 20px; }
+.diff-sbs-row .line-num { min-width: 40px; padding: 0 6px; text-align: right; color: #bbb; background: #fafafa; border-right: 1px solid #eee; user-select: none; flex-shrink: 0; }
+.diff-sbs-row .line-content { padding: 0 8px; white-space: pre-wrap; word-break: break-all; flex: 1; min-width: 0; }
+.diff-sbs-row.equal .line-content { color: #333; }
+.diff-sbs-row.delete .line-num { background: #ffcdd2; color: #b71c1c; }
+.diff-sbs-row.delete .line-content { background: #ffebee; color: #c62828; }
+.diff-sbs-row.insert .line-num { background: #c8e6c9; color: #1b5e20; }
+.diff-sbs-row.insert .line-content { background: #e8f5e9; color: #2e7d32; }
+.diff-sbs-row.replace .line-num { background: #fff9c4; color: #f57f17; }
+.diff-sbs-row.replace .line-content { background: #fffde7; color: #f57f17; }
+.diff-sbs-row.empty-row .line-content { background: #f5f5f5; min-height: 20px; }
+.diff-sbs-wrap { max-height: 600px; overflow: auto; border: 1px solid #e0e0e0; border-radius: 4px; padding: 0; }
+.diff-sbs-no-change { color: #888; font-size: 12px; padding: 12px; text-align: center; }
 
 /* Test cases textarea */
 .tc-area { margin-top: 8px; margin-bottom: 12px; }
@@ -132,12 +150,7 @@ textarea.spec-editor:focus { outline: none; border-color: #1976d2; }
 .collapsible-header .collapse-arrow { font-size: 12px; color: #999; transition: transform 0.2s; }
 .collapsible-header .collapse-arrow.open { transform: rotate(180deg); }
 
-/* Diff viewer */
-.diff-viewer { font-family: "SF Mono", Monaco, monospace; font-size: 12px; background: #fafafa; border: 1px solid #e0e0e0; border-radius: 4px; padding: 12px; max-height: 500px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
-.diff-viewer .diff-header { color: #999; }
-.diff-viewer .diff-hunk { color: #1565c0; background: #e3f2fd; }
-.diff-viewer .diff-add { color: #2e7d32; background: #e8f5e9; }
-.diff-viewer .diff-del { color: #c62828; background: #ffebee; }
+/* Diff viewer - side by side (legacy override removed) */
 
 /* Guide page */
 .guide-card h3 span:first-child { font-size: 15px; }
@@ -1084,7 +1097,7 @@ function formatTaskResult(task) {
           <label>To:</label><select id="vdiff-to-${task.id}" style="padding:2px 4px;"></select>
           <button class="btn btn-sm" onclick="loadEvolveDiff('${task.id}')">查看 Diff</button>
         </div>
-        <div id="vdiff-result-${task.id}" style="max-height:200px;overflow:auto;font-size:12px;background:#fff;padding:4px;border:1px solid #eee;"></div>
+        <div id="vdiff-result-${task.id}" style="max-height:600px;overflow:auto;font-size:12px;background:#fff;padding:4px;border:1px solid #eee;"></div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
           <label>操作:</label>
           <select id="vaction-ver-${task.id}" style="padding:2px 4px;"></select>
@@ -1849,30 +1862,49 @@ async function loadEvolveDiff(taskId) {
   const from = document.getElementById('vdiff-from-' + taskId).value;
   const to = document.getElementById('vdiff-to-' + taskId).value;
   if (from === to) {
-    document.getElementById('vdiff-result-' + taskId).innerHTML = '<div style="color:#888;font-size:12px">请选择不同的版本</div>';
+    document.getElementById('vdiff-result-' + taskId).innerHTML = '<div class="diff-sbs-no-change">请选择不同的版本</div>';
     return;
   }
 
   const el = document.getElementById('vdiff-result-' + taskId);
-  el.innerHTML = '<div style="color:#888;font-size:12px">加载中...</div>';
+  el.innerHTML = '<div class="diff-sbs-no-change">加载中...</div>';
 
-  const diff = await fetch('/api/evolve-diff/' + encodeURIComponent(info.skill) + '/' + encodeURIComponent(info.runId) + '?frm=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to)).then(r => r.text());
+  const data = await fetch('/api/evolve-diff-json/' + encodeURIComponent(info.skill) + '/' + encodeURIComponent(info.runId) + '?frm=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to)).then(r => r.json());
 
-  if (diff === '(无变化)' || !diff.trim()) {
-    el.innerHTML = '<div style="color:#888;font-size:12px">两个版本无差异</div>';
+  if (data.error) {
+    el.innerHTML = '<div class="diff-sbs-no-change">' + data.error + '</div>';
+    return;
+  }
+  if (!data.files || !data.files.length) {
+    el.innerHTML = '<div class="diff-sbs-no-change">两个版本无差异</div>';
     return;
   }
 
-  // 渲染 unified diff
-  const lines = diff.split('\n');
-  let html = '<div class="diff-viewer">';
-  for (const line of lines) {
-    let cls = '';
-    if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-header';
-    else if (line.startsWith('@@')) cls = 'diff-hunk';
-    else if (line.startsWith('+')) cls = 'diff-add';
-    else if (line.startsWith('-')) cls = 'diff-del';
-    html += `<div class="${cls}">${line.replace(/</g, '&lt;')}</div>`;
+  let html = '<div class="diff-sbs-wrap">';
+  for (const file of data.files) {
+    const statusLabel = {modified: '已修改', added: '新增', deleted: '已删除'}[file.status] || file.status;
+    html += '<div class="diff-sbs">';
+    html += '<div class="diff-sbs-file-header"><span>' + file.name + '</span><span class="diff-status ' + file.status + '">' + statusLabel + '</span></div>';
+    html += '<div class="diff-sbs-cols">';
+    // Left pane
+    html += '<div class="diff-sbs-pane"><div class="diff-sbs-pane-header">旧版本</div>';
+    for (const line of file.lines) {
+      const cls = line.type === 'insert' ? 'empty-row' : line.type;
+      const num = line.left_num != null ? line.left_num : '';
+      const text = (line.left || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      html += '<div class="diff-sbs-row ' + cls + '"><span class="line-num">' + num + '</span><span class="line-content">' + text + '</span></div>';
+    }
+    html += '</div>';
+    // Right pane
+    html += '<div class="diff-sbs-pane"><div class="diff-sbs-pane-header">新版本</div>';
+    for (const line of file.lines) {
+      const cls = line.type === 'delete' ? 'empty-row' : line.type;
+      const num = line.right_num != null ? line.right_num : '';
+      const text = (line.right || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      html += '<div class="diff-sbs-row ' + cls + '"><span class="line-num">' + num + '</span><span class="line-content">' + text + '</span></div>';
+    }
+    html += '</div>';
+    html += '</div></div>';
   }
   html += '</div>';
   el.innerHTML = html;

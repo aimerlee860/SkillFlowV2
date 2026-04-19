@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import io
 import json
 import shutil
@@ -86,9 +87,14 @@ def _start_evolve_watcher(tm, task, output_dir: Path):
     """轮询 evolve_log.json 获取迭代进度。"""
     seen_iters = 0
 
+    task_id = task.id
+
     def _watch():
         nonlocal seen_iters
-        while task.status in ("pending", "queued", "running"):
+        while True:
+            current = tm.get_task(task_id)
+            if not current or current.status not in ("pending", "queued", "running"):
+                break
             try:
                 # 找到最新的 timestamp 子目录
                 if not output_dir.exists():
@@ -108,7 +114,7 @@ def _start_evolve_watcher(tm, task, output_dir: Path):
                 history = data.get("history", [])
                 if len(history) > seen_iters:
                     for record in history[seen_iters:]:
-                        tm.emit_progress(task.id, "iteration", record)
+                        tm.emit_progress(task_id, "iteration", record)
                     seen_iters = len(history)
             except Exception:
                 pass
@@ -242,6 +248,93 @@ def get_evolve_diff(skill_name: str, run_id: str, frm: str = "baseline", to: str
     after = snapshot_files(after_dir)
     diff = build_diff_text(before, after)
     return diff
+
+
+@router.get("/evolve-diff-json/{skill_name}/{run_id}")
+def get_evolve_diff_json(skill_name: str, run_id: str, frm: str = "baseline", to: str = ""):
+    """返回两个版本之间的结构化 diff，用于左右对比展示。"""
+    from ...evolve.guards import snapshot_files
+
+    if not to:
+        return {"error": "缺少 to 参数"}
+
+    before_dir = _resolve_skill_dir(skill_name, run_id, frm)
+    after_dir = _resolve_skill_dir(skill_name, run_id, to)
+
+    if not before_dir or not before_dir.exists():
+        return {"error": f"版本不存在: {frm}"}
+    if not after_dir or not after_dir.exists():
+        return {"error": f"版本不存在: {to}"}
+
+    before = snapshot_files(before_dir)
+    after = snapshot_files(after_dir)
+
+    all_files = sorted(set(before) | set(after))
+    files = []
+
+    for fname in all_files:
+        old_lines = (before.get(fname) or "").splitlines()
+        new_lines = (after.get(fname) or "").splitlines()
+
+        if old_lines == new_lines:
+            continue
+
+        if not old_lines:
+            status = "added"
+        elif not new_lines:
+            status = "deleted"
+        else:
+            status = "modified"
+
+        sm = difflib.SequenceMatcher(None, old_lines, new_lines)
+        lines = []
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "equal":
+                for k in range(i2 - i1):
+                    lines.append({
+                        "type": "equal",
+                        "left_num": i1 + k + 1,
+                        "right_num": j1 + k + 1,
+                        "left": old_lines[i1 + k],
+                        "right": new_lines[j1 + k],
+                    })
+            elif tag == "delete":
+                for k in range(i1, i2):
+                    lines.append({
+                        "type": "delete",
+                        "left_num": k + 1,
+                        "right_num": None,
+                        "left": old_lines[k],
+                        "right": "",
+                    })
+            elif tag == "insert":
+                for k in range(j1, j2):
+                    lines.append({
+                        "type": "insert",
+                        "left_num": None,
+                        "right_num": k + 1,
+                        "left": "",
+                        "right": new_lines[k],
+                    })
+            elif tag == "replace":
+                # 交错显示删除和插入行
+                left_range = list(range(i1, i2))
+                right_range = list(range(j1, j2))
+                max_len = max(len(left_range), len(right_range))
+                for k in range(max_len):
+                    li = left_range[k] if k < len(left_range) else None
+                    ri = right_range[k] if k < len(right_range) else None
+                    lines.append({
+                        "type": "replace",
+                        "left_num": li + 1 if li is not None else None,
+                        "right_num": ri + 1 if ri is not None else None,
+                        "left": old_lines[li] if li is not None else "",
+                        "right": new_lines[ri] if ri is not None else "",
+                    })
+
+        files.append({"name": fname, "status": status, "lines": lines})
+
+    return {"files": files}
 
 
 @router.get("/evolve-download/{skill_name}/{run_id}/{version}")
