@@ -13,7 +13,7 @@ from rich.table import Table
 from ..core.utils import ensure_dir, load_json, load_text, save_json, save_text
 from ..eval.runner import run_eval
 from ..eval.test_generator import generate_test_cases
-from ..eval.trace import aggregate_case_traces, format_trace_context
+from ..eval.trace import CaseTraceAggregate, aggregate_case_traces, build_trace_delta, format_trace_context
 from .guards import check_regression, should_run_eval, snapshot_files
 from .mutator import mutate_skill
 
@@ -99,8 +99,9 @@ def evolve_skill(
         best_dir = backup_dir if best_iter == 0 else output_dir / f"iter-{best_iter}" / skill_name
 
         no_improve_count, no_change_count = _restore_counters(history)
-        trace_context = _build_trace_context(best_result) if mode == "greedy" else ""
+        trace_context = _build_trace_context(best_result)
         failed_cases = _collect_failed_cases(best_result)
+        prev_aggregates = _extract_aggregates(best_result)
 
         console.print(f"[bold blue]恢复演化: 从轮次 {start_iteration} 继续[/bold blue]")
         _emit("status", {"phase": "resume", "message": f"恢复演化: 从轮次 {start_iteration} 继续"})
@@ -175,6 +176,7 @@ def evolve_skill(
         start_iteration = 1
         no_improve_count = 0
         no_change_count = 0
+        prev_aggregates = _extract_aggregates(baseline_result)
 
     # === 共用迭代循环 ===
     stop_reason = "max_iterations"
@@ -333,6 +335,9 @@ def evolve_skill(
 
         summary = analysis.strip().replace("\n", " ")[:200]
 
+        cur_aggregates = _extract_aggregates(evolved_result)
+        trace_delta = build_trace_delta(cur_aggregates, prev_aggregates)
+
         iter_record = {
             "iteration": iteration,
             "mode": mode,
@@ -346,6 +351,7 @@ def evolve_skill(
             "threshold_used": round(adaptive_thr, 4),
             "accepted": accepted,
             "summary": summary,
+            "trace_delta": trace_delta,
         }
         history.append(iter_record)
 
@@ -371,7 +377,8 @@ def evolve_skill(
             no_improve_count += 1
 
         # 每轮都用最新 eval 结果更新轨迹诊断，供下轮变异参考
-        trace_context = _build_trace_context(evolved_result)
+        trace_context = format_trace_context(cur_aggregates) if cur_aggregates else ""
+        prev_aggregates = cur_aggregates
 
         # 更新失败用例，供下轮反思使用
         failed_cases = _collect_failed_cases(evolved_result)
@@ -522,6 +529,9 @@ def _build_past_strategies(history: list[dict]) -> str:
             entry += f" 原因={skip}"
         if summary:
             entry += f"\n  摘要: {summary[:150]}"
+        trace_delta = h.get("trace_delta", "")
+        if trace_delta:
+            entry += f"\n  轨迹: {trace_delta}"
         lines.append(entry)
 
     return "\n".join(lines) + "\n"
@@ -553,17 +563,21 @@ def _restore_counters(history: list[dict]) -> tuple[int, int]:
     return no_improve_count, no_change_count
 
 
-def _build_trace_context(eval_result: dict) -> str:
-    """从 eval 结果中提取轨迹并生成摘要文本。"""
+def _extract_aggregates(eval_result: dict) -> list[CaseTraceAggregate]:
+    """从 eval 结果中提取聚合轨迹列表。"""
     traces_by_case = eval_result.get("_traces")
     if not traces_by_case:
-        return ""
-
+        return []
     aggregates = []
     for case_traces in traces_by_case:
         if case_traces:
             aggregates.append(aggregate_case_traces(case_traces))
+    return aggregates
 
+
+def _build_trace_context(eval_result: dict) -> str:
+    """从 eval 结果中提取轨迹并生成摘要文本。"""
+    aggregates = _extract_aggregates(eval_result)
     return format_trace_context(aggregates) if aggregates else ""
 
 

@@ -652,6 +652,72 @@ def format_trace_for_judge(trace: ExecutionTrace) -> str:
     return header + signal_section + steps_section
 
 
+# ── 跨迭代对比 ──────────────────────────────────────────────────
+
+_RATE_CHANGE_THRESHOLD = 0.1
+
+
+def build_trace_delta(
+    cur_aggs: list[CaseTraceAggregate],
+    prev_aggs: list[CaseTraceAggregate],
+) -> str:
+    """对比两轮聚合轨迹，生成一行摘要供 past_strategies 使用。
+
+    Returns:
+        一行变化描述，如 "2/5用例通过率提升，1个共识错误已解决，新增工具A误用"
+        无变化时返回空字符串。
+    """
+    if not prev_aggs or not cur_aggs:
+        return ""
+
+    prev_map = {a.test_point: a for a in prev_aggs if a.test_point}
+
+    improved = 0
+    regressed = 0
+    resolved_errors = 0
+    new_errors = 0
+    resolved_misuse = 0
+    new_misuse = 0
+
+    for cur in cur_aggs:
+        if not cur.test_point:
+            continue
+        prev = prev_map.get(cur.test_point)
+        if not prev:
+            continue
+
+        prev_rate = prev.pass_count / max(prev.total_trials, 1)
+        cur_rate = cur.pass_count / max(cur.total_trials, 1)
+        if cur_rate - prev_rate > _RATE_CHANGE_THRESHOLD:
+            improved += 1
+        elif prev_rate - cur_rate > _RATE_CHANGE_THRESHOLD:
+            regressed += 1
+
+        resolved_errors += len(set(prev.consensus_errors) - set(cur.consensus_errors))
+        new_errors += len(set(cur.consensus_errors) - set(prev.consensus_errors))
+        resolved_misuse += len(set(prev.consensus_tool_misuse) - set(cur.consensus_tool_misuse))
+        new_misuse += len(set(cur.consensus_tool_misuse) - set(prev.consensus_tool_misuse))
+
+    parts: list[str] = []
+    if improved:
+        parts.append(f"{improved}个用例通过率提升")
+    if regressed:
+        parts.append(f"{regressed}个用例通过率下降")
+    if resolved_errors:
+        parts.append(f"{resolved_errors}个共识错误已解决")
+    if new_errors:
+        parts.append(f"新增{new_errors}个共识错误")
+    if resolved_misuse:
+        parts.append(f"{resolved_misuse}个工具误用已消除")
+    if new_misuse:
+        parts.append(f"新增{new_misuse}个工具误用")
+
+    if not parts:
+        return ""
+
+    return "，".join(parts)
+
+
 # ── 落盘 ──────────────────────────────────────────────────────
 
 
