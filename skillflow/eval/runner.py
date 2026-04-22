@@ -7,7 +7,7 @@ import logging
 import re
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from pathlib import Path
 from typing import Optional, Callable
 
@@ -23,6 +23,9 @@ debug_logger = logging.getLogger("skillflow.debug")
 
 # JSONL 增量保存文件名
 _PROGRESS_FILE = "eval_progress.jsonl"
+
+# 单次 trial 超时（秒）
+TRIAL_TIMEOUT_SECONDS = 600
 
 
 def judge_response(test_point: str, question: str, response: str, checkpoints: list[str] | None = None, max_retries: int = 3, expected: str | None = None, trace_section: str = "") -> tuple[dict, float]:
@@ -130,10 +133,40 @@ def _run_single_trial(
         f"build={build_elapsed:.2f}s[/dim]", end=""
     )
 
-    # 阶段 2: 运行 agent
+    # 阶段 2: 运行 agent（带超时保护）
     t_agent = time.perf_counter()
-    response, messages = run_agent(agent, question)
+
+    def _run_with_timeout():
+        return run_agent(agent, question)
+
+    timed_out = False
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_run_with_timeout)
+        try:
+            response, messages = future.result(timeout=TRIAL_TIMEOUT_SECONDS)
+        except FuturesTimeoutError:
+            timed_out = True
+            response, messages = "", []
+
     agent_elapsed = time.perf_counter() - t_agent
+
+    if timed_out:
+        console.print(
+            f"  [red bold]  trial {trial_idx+1}: "
+            f"超时 ({TRIAL_TIMEOUT_SECONDS}s), 强制终止[/red bold]"
+        )
+        return {
+            "trial": trial_idx + 1,
+            "pass": False,
+            "score": 0.0,
+            "reason": f"执行超时（{TRIAL_TIMEOUT_SECONDS}s），agent 未在规定时间内完成",
+            "response": "",
+            "time_build": round(build_elapsed, 2),
+            "time_agent": round(agent_elapsed, 2),
+            "time_judge": 0,
+            "time_total": round(build_elapsed + agent_elapsed, 2),
+        }
+
     console.print(
         f"  [dim]  trial {trial_idx+1}: "
         f"agent={agent_elapsed:.2f}s, judge...[/dim]", end=""

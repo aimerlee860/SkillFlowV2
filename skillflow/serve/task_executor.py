@@ -171,8 +171,8 @@ class TaskExecutor:
             if log_file.exists():
                 return self._resume_evolve(task, skill_path, log_file, params)
 
-        # 预计算 timestamp，传给 evolve_skill 确保一致性
-        timestamp = time.strftime("%Y%m%d%H%M")
+        # 使用预计算的 timestamp（由 API 层传入），确保 watcher 和 executor 一致
+        timestamp = params.get("run_id") or time.strftime("%Y%m%d%H%M")
         run_dir = output_dir / timestamp
 
         # 在执行前持久化 run_dir，确保崩溃后可恢复

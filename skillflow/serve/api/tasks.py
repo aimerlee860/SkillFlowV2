@@ -63,7 +63,11 @@ def get_task(task_id: str, request: Request):
 
 
 @router.get("/tasks/{task_id}/progress")
-async def task_progress_stream(task_id: str, request: Request):
+async def task_progress_stream(
+    task_id: str,
+    request: Request,
+    last_seq: int = Query(-1, description="客户端已收到的最大序列号"),
+):
     """SSE 进度流。"""
     tm = request.app.state.task_manager
     task = tm.get_task(task_id)
@@ -72,7 +76,6 @@ async def task_progress_stream(task_id: str, request: Request):
 
     async def _stream():
         nonlocal task
-        last_seq = -1
         while task.status in ("pending", "queued", "running"):
             events = tm.get_progress_events(task_id, after_seq=last_seq)
             for ev in events:

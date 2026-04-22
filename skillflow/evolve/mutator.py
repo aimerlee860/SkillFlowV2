@@ -215,6 +215,7 @@ def reflect_on_failures(
     failed_cases: list[dict],
     exemplars_section: str = "（无近阈值范例）",
     trace_context: str = "",
+    speed: str = "low",
 ) -> str:
     """自我反思阶段：双面分析技能在失败用例上的表现。
 
@@ -223,6 +224,7 @@ def reflect_on_failures(
         failed_cases: 失败的测试用例及评估结果
         exemplars_section: 近阈值范例的格式化文本
         trace_context: 执行轨迹诊断文本（可选）
+        speed: 演化速度 "low"|"medium"|"high"
 
     Returns:
         反思分析文本
@@ -237,12 +239,14 @@ def reflect_on_failures(
 
     if not trace_context:
         trace_context = "（无执行轨迹数据）"
+    speed_constraint = build_speed_constraint(speed)
     prompt = EVOLVE_REFLECT_PROMPT.format(
         skill_content=skill_content,
         failed_cases=cases_text,
         failure_reasons=reasons_text,
         exemplars_section=exemplars_section,
         trace_context=trace_context,
+        speed_constraint=speed_constraint,
     )
 
     console.print("[blue]反思失败用例中...[/blue]")
@@ -255,8 +259,11 @@ def rewrite_skill(
     skill_content: str,
     reflection: str,
     exemplars_instruction: str = "",
-) -> str:
-    """基于反思改写技能。
+) -> tuple[str, bool]:
+    """基于反思对 SKILL.md 做定向编辑。
+
+    使用 SEARCH/REPLACE 格式做定点修改，而非全量重写。
+    如果 LLM 输出无法解析为 SEARCH/REPLACE 格式，回退到全量替换。
 
     Args:
         skill_content: 当前 SKILL.md 内容
@@ -264,7 +271,7 @@ def rewrite_skill(
         exemplars_instruction: 范例注入指令文本
 
     Returns:
-        改写后的 SKILL.md 内容
+        (修改后的 SKILL.md 内容, 是否有修改)
     """
     prompt = EVOLVE_REWRITE_PROMPT.format(
         skill_content=skill_content,
@@ -275,7 +282,30 @@ def rewrite_skill(
     console.print("[blue]改写技能中...[/blue]")
     llm = get_llm()
     response = llm.invoke(prompt)
-    return response.content if hasattr(response, "content") else str(response)
+    text = response.content if hasattr(response, "content") else str(response)
+
+    # 尝试解析为 SEARCH/REPLACE 格式
+    _, modified_files = _parse_audit_output(text)
+
+    if "SKILL.md" in modified_files:
+        block = modified_files["SKILL.md"]
+        # 检测是否为 SEARCH/REPLACE 格式
+        sr_pattern = r"<<<<<<< SEARCH\n(.*?)=======\n(.*?)>>>>>>> REPLACE"
+        sr_matches = re.findall(sr_pattern, block, re.DOTALL)
+        if sr_matches:
+            result = _apply_search_replace(skill_content, sr_matches)
+            return result, True
+        else:
+            # 完整文件替换（LLM 没有按格式输出，回退）
+            return _clean_markdown_wrapping(block), True
+
+    # 没有检测到文件修改标记，尝试回退：如果输出看起来像完整 SKILL.md
+    cleaned = _clean_markdown_wrapping(text)
+    if cleaned.strip().startswith("---"):
+        return cleaned, True
+
+    # 无修改
+    return skill_content, False
 
 
 # ---------- 统一入口 ----------
@@ -343,16 +373,19 @@ def mutate_skill(
             failed_cases,
             exemplars_section=exemplars_section,
             trace_context=trace_context,
+            speed=speed,
         )
         console.print("[green]反思完成[/green]")
 
-        new_content = rewrite_skill(
+        new_content, was_modified = rewrite_skill(
             skill_content,
             reflection,
             exemplars_instruction=exemplars_instruction,
         )
-        new_content = _clean_markdown_wrapping(new_content)
-        save_text(skill_path / "SKILL.md", new_content)
+        if was_modified:
+            save_text(skill_path / "SKILL.md", new_content)
+        else:
+            console.print("[dim]改写阶段无修改[/dim]")
 
         combined += f"\n\n## 失败用例反思\n{reflection}"
         strategy = "audit+reflect"
@@ -364,8 +397,15 @@ def mutate_skill(
 
     # 判断是否有文件被修改
     skill_after = load_text(skill_path / "SKILL.md") if (skill_path / "SKILL.md").exists() else ""
-    # audit 可能改了其他文件但没改 SKILL.md，通过 audit_skill 的返回判断
     files_changed = skill_before_audit != skill_after or _audit_modified_files(audit_analysis)
+
+    # 过拟合检测（复用已读取的 skill_after，避免冗余 I/O）
+    if eval_result and eval_result.get("test_cases") and skill_after:
+        warnings = _detect_overfitting(skill_after, eval_result["test_cases"])
+        for w in warnings:
+            console.print(f"[yellow]⚠ 过拟合警告: {w}[/yellow]")
+        if warnings:
+            combined += f"\n\n## 过拟合警告\n" + "\n".join(f"- {w}" for w in warnings)
 
     return combined, strategy, files_changed
 
@@ -373,3 +413,35 @@ def mutate_skill(
 def _audit_modified_files(audit_text: str) -> bool:
     """从审视输出中判断是否修改了文件。"""
     return "<<<FILE:" in audit_text
+
+
+def _detect_overfitting(skill_text: str, test_cases: list[dict]) -> list[str]:
+    """检测修改后的技能是否包含测试用例原文。
+
+    通过子串匹配检查 SKILL.md 是否直接嵌入了测试用例的 question。
+    使用较长片段（≥60% 长度且≥40字符）以降低中文通用短语的误报率。
+
+    Args:
+        skill_text: SKILL.md 文件内容
+        test_cases: 评估测试用例列表
+
+    Returns:
+        警告信息列表，空表示未检测到过拟合
+    """
+    warnings = []
+
+    for case in test_cases:
+        question = case.get("question", "")
+        if not question:
+            continue
+        # 使用 question 的 60% 长度做匹配，下限 40 字符
+        match_len = max(40, int(len(question) * 0.6))
+        if len(question) < match_len:
+            continue
+        fragment = question[:match_len]
+        if fragment in skill_text:
+            warnings.append(
+                f"SKILL.md 包含测试用例原文: '{question[:40]}...'"
+            )
+
+    return warnings

@@ -912,6 +912,7 @@ function renderTasksList(tasks) {
 // 任务详情展开/收起
 let _taskSSEConnections = {}; // 保存 SSE 连接
 let _expandedTasks = {}; // 记录已展开的任务
+let _lastEventSeq = {}; // 记录每个任务已加载的最后事件序列号
 
 function toggleTaskDetail(taskId, status) {
   const detailEl = document.getElementById('task-detail-' + taskId);
@@ -926,6 +927,7 @@ function toggleTaskDetail(taskId, status) {
       delete _taskSSEConnections[taskId];
     }
     delete _expandedTasks[taskId];
+    delete _lastEventSeq[taskId];
   } else {
     detailEl.classList.add('show');
     _expandedTasks[taskId] = true;
@@ -947,11 +949,14 @@ function loadTaskLog(taskId) {
     const events = data.events || [];
     // 渲染进度事件为日志
     let logHtml = '';
+    let lastSeq = -1;
     for (const ev of events) {
       const typeClass = ev.type === 'status' ? 'info' : (ev.type === 'error' ? 'error' : '');
       const msg = formatEventMessage(ev);
       logHtml += `<div class="log-line ${typeClass}">${msg}</div>`;
+      if (ev.seq != null && ev.seq > lastSeq) lastSeq = ev.seq;
     }
+    _lastEventSeq[taskId] = lastSeq;
     if (!logHtml) logHtml = '<div class="log-line" style="color:#888">暂无进度记录</div>';
     logEl.innerHTML = logHtml;
     logEl.scrollTop = logEl.scrollHeight;
@@ -1122,7 +1127,8 @@ function formatTaskResult(task) {
 function connectTaskSSE(taskId) {
   if (_taskSSEConnections[taskId]) return;
 
-  const es = new EventSource('/api/tasks/' + taskId + '/progress');
+  const lastSeq = _lastEventSeq[taskId] != null ? _lastEventSeq[taskId] : -1;
+  const es = new EventSource('/api/tasks/' + taskId + '/progress?last_seq=' + lastSeq);
   _taskSSEConnections[taskId] = es;
 
   es.onmessage = (e) => {
@@ -1140,6 +1146,9 @@ function connectTaskSSE(taskId) {
 function appendTaskLog(taskId, ev) {
   const logEl = document.getElementById('task-log-' + taskId);
   if (!logEl) return;
+
+  // 更新最后已知 seq
+  if (ev.seq != null) _lastEventSeq[taskId] = ev.seq;
 
   const typeClass = ev.type === 'status' ? 'info' : (ev.type === 'error' ? 'error' : 'success');
   const msg = formatEventMessage(ev);

@@ -48,13 +48,18 @@ def start_evolve(req: EvolveRequest, request: Request):
     if req.spec:
         spec_path = str(Path.cwd() / "specs" / req.spec)
 
-    output_dir = str(Path.cwd() / "results" / req.skill / "evolve")
+    output_dir = Path.cwd() / "results" / req.skill / "evolve"
+
+    # 预计算 timestamp，确保 watcher 和 executor 使用同一个 run_dir
+    import time as _time
+    timestamp = _time.strftime("%Y%m%d%H%M")
+    run_dir = output_dir / timestamp
 
     # 构建参数
     params = {
         "skill_path": str(skill_path),
         "spec_path": spec_path,
-        "output_dir": output_dir,
+        "output_dir": str(output_dir),
         "threshold": req.threshold,
         "trials": req.trials,
         "parallel": req.parallel,
@@ -66,10 +71,11 @@ def start_evolve(req: EvolveRequest, request: Request):
         "test_cases_file": req.test_cases_file,
         "debug": req.debug,
         "save_trace": req.save_trace,
+        "run_id": timestamp,
     }
 
     # 创建任务
-    task = tm.create_task("evolve", skill=req.skill, params=params, output_dir=output_dir)
+    task = tm.create_task("evolve", skill=req.skill, params=params, output_dir=str(run_dir))
 
     # 发送初始状态
     tm.emit_progress(task.id, "status", {"message": "Starting evolution..."})
@@ -77,16 +83,15 @@ def start_evolve(req: EvolveRequest, request: Request):
     # 提交执行
     status = tm.submit(task.id)
 
-    # 启动 evolve_log 轮询（用于实时推送迭代进度）
-    _start_evolve_watcher(tm, task, Path(output_dir))
+    # 启动 evolve_log 轮询（监听本次 run_dir，避免读取旧 run 的日志）
+    _start_evolve_watcher(tm, task, run_dir)
 
     return {"task_id": task.id, "status": status}
 
 
-def _start_evolve_watcher(tm, task, output_dir: Path):
-    """轮询 evolve_log.json 获取迭代进度。"""
+def _start_evolve_watcher(tm, task, run_dir: Path):
+    """轮询 run_dir/evolve_log.json 获取迭代进度。"""
     seen_iters = 0
-
     task_id = task.id
 
     def _watch():
@@ -96,26 +101,14 @@ def _start_evolve_watcher(tm, task, output_dir: Path):
             if not current or current.status not in ("pending", "queued", "running"):
                 break
             try:
-                # 找到最新的 timestamp 子目录
-                if not output_dir.exists():
-                    continue
-                subdirs = sorted(
-                    [d for d in output_dir.iterdir() if d.is_dir()],
-                    key=lambda d: d.name,
-                )
-                if not subdirs:
-                    continue
-                latest = subdirs[-1]
-                log_file = latest / "evolve_log.json"
-                if not log_file.exists():
-                    continue
-
-                data = json.loads(log_file.read_text(encoding="utf-8"))
-                history = data.get("history", [])
-                if len(history) > seen_iters:
-                    for record in history[seen_iters:]:
-                        tm.emit_progress(task_id, "iteration", record)
-                    seen_iters = len(history)
+                log_file = run_dir / "evolve_log.json"
+                if log_file.exists():
+                    data = json.loads(log_file.read_text(encoding="utf-8"))
+                    history = data.get("history", [])
+                    if len(history) > seen_iters:
+                        for record in history[seen_iters:]:
+                            tm.emit_progress(task_id, "iteration", record)
+                        seen_iters = len(history)
             except Exception:
                 pass
             time.sleep(2)
